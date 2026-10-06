@@ -1,0 +1,16 @@
+# Optional local PostgreSQL for development: `docker compose up -d`
+# Then use DATABASE_URL=postgres://tyllage:tyllage@localhost:5432/tyllage
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: tyllage
+      POSTGRES_PASSWORD: tyllage
+      POSTGRES_DB: tyllage
+    ports:
+      - '5432:5432'
+    volumes:
+      - tyllage-pg:/var/lib/postgresql/data
+      - ./server/scripts/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+volumes:
+  tyllage-pg:

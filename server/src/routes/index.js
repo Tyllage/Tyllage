@@ -1,0 +1,36 @@
+import { Router } from 'express';
+import authRoutes from './authRoutes.js';
+import farmRoutes from './farmRoutes.js';
+import produceRoutes from './produceRoutes.js';
+import harvestRoutes from './harvestRoutes.js';
+import demandRoutes from './demandRoutes.js';
+import matchRoutes from './matchRoutes.js';
+import orderRoutes from './orderRoutes.js';
+import recoveryRoutes from './recoveryRoutes.js';
+import rescueRoutes from './rescueRoutes.js';
+import campaignRoutes from './campaignRoutes.js';
+import analyticsRoutes from './analyticsRoutes.js';
+import communityDropRoutes from './communityDropRoutes.js';
+import marketplaceRoutes from './marketplaceRoutes.js';
+import userRoutes from './userRoutes.js';
+import miscRoutes from './miscRoutes.js';
+
+const router = Router();
+
+router.use('/auth', authRoutes);
+router.use('/farms', farmRoutes);
+router.use('/produce', produceRoutes);
+router.use('/harvests', harvestRoutes);
+router.use('/demand', demandRoutes);
+router.use('/matches', matchRoutes);
+router.use('/orders', orderRoutes);
+router.use('/recovery', recoveryRoutes);
+router.use('/rescue', rescueRoutes);
+router.use('/campaigns', campaignRoutes);
+router.use('/analytics', analyticsRoutes);
+router.use('/community-drops', communityDropRoutes);
+router.use('/marketplace', marketplaceRoutes);
+router.use('/users', userRoutes);
+router.use('/', miscRoutes);
+
+export default router;

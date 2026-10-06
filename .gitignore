@@ -426,3 +426,16 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# ---- Tyllage (Node / Vite) ----
+.env
+.env.*
+!.env.example
+client/dist/
+dist/
+coverage/
+npm-debug.log*
+.DS_Store
+
+# Local Claude Code workspace settings
+.claude/
