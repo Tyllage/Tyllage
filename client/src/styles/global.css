@@ -306,7 +306,11 @@ textarea.input { min-height: 90px; resize: vertical; line-height: 1.5; }
 
 .auth-page { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; }
 .auth-side { background: var(--sidebar); color: #cfdcd5; padding: 48px; display: flex; flex-direction: column; justify-content: space-between; }
-.auth-side h1 { color: #fff; font-size: 30px; margin-top: 40px; letter-spacing: -0.02em; }
+.auth-side h1 { color: #fff; font-size: 30px; margin-top: 14px; letter-spacing: -0.02em; }
+.auth-side > div:first-child { margin: auto 0; } /* centre the message vertically, footer stays at the bottom */
+.auth-tagline { color: #7fd36f; font-weight: 700; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+.auth-back { display: inline-block; margin-bottom: 22px; }
+.auth-logo { margin-bottom: 22px; }
 .auth-side .loop { margin-top: 28px; display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; }
 .auth-side .loop div { display: flex; gap: 10px; align-items: center; }
 .auth-side .loop b { width: 22px; height: 22px; border-radius: 50%; background: var(--sidebar-2); display: grid; place-items: center; font-size: 11px; color: var(--accent); }
