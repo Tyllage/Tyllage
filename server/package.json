@@ -2,6 +2,7 @@
   "name": "tyllage-server",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Tyllage API — From Harvest to Demand.",
   "type": "module",
   "main": "src/server.js",

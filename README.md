@@ -447,3 +447,17 @@ Predicted Farm Supply  +  Predicted Buyer Demand
                  ↓
    Optimal Commercial Allocation
 ```
+
+---
+
+## Project documents
+
+| Document | Purpose |
+|---|---|
+| [LICENSE](LICENSE) | MIT License |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability privately |
+| [AUDIT.md](AUDIT.md) | Security controls, latest audit results and known limitations |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to set up, change and submit code |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Expected behaviour in project spaces |
+
+Released under the [MIT License](LICENSE).
