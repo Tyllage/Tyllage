@@ -274,11 +274,13 @@ export function assessRoutes(batch, candidates, ctx = {}) {
     else r.status = 'VIABLE';
     r.action = r.key === 'RESCUE' && r.status === 'VIABLE' ? 'MOVE_TO_RESCUE' : ACTIONS[r.status];
   }
-  routes.sort((a, b) => b.score - a.score || b.coverableQuantity - a.coverableQuantity);
+  // Viable routes first (routes without demand are scored on a hypothetical profile), then by score.
+  routes.sort((a, b) => (a.status === 'VIABLE' ? 0 : 1) - (b.status === 'VIABLE' ? 0 : 1) || b.score - a.score || b.coverableQuantity - a.coverableQuantity);
 
   const demandViable = routes.filter((r) => r.key !== 'RESCUE' && r.status === 'VIABLE');
   const rescue = routes.find((r) => r.key === 'RESCUE');
   const recommended = demandViable[0] || (rescue.status === 'VIABLE' ? rescue : null);
+  if (recommended) routes.unshift(...routes.splice(routes.indexOf(recommended), 1)); // recommended route leads the list
 
   // Route plan: fill the remaining quantity route by route in score order; Rescue (or a final disposition) takes the rest.
   let left = remaining;

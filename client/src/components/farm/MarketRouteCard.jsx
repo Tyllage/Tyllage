@@ -197,7 +197,8 @@ export default function MarketRouteCard({ batch, canAct, version, onSelected }) 
               {a.selections?.length > 0 && (
                 <details>
                   <summary className="small strong" style={{ cursor: 'pointer' }}>Route decisions ({a.selections.length})</summary>
-                  <table className="table mt-8">
+                  <div className="table-wrap mt-8">
+                  <table className="table">
                     <tbody>
                       {a.selections.map((s) => (
                         <tr key={s.id}>
@@ -210,6 +211,7 @@ export default function MarketRouteCard({ batch, canAct, version, onSelected }) 
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </details>
               )}
             </div>

@@ -39,6 +39,7 @@ function Suggestion({ s, farmId, drops, onCreated }) {
       description={`${s.members.length} small requests, each below the ${kg(s.viableMinimum, s.unit)} viable order size. ${kg(s.availableQuantity, s.unit)} unallocated on this batch.`}
       actions={<Badge tone={viable ? 'low' : 'medium'}>{viable ? 'Viable together' : `Needs ${kg(Math.max(0, s.viableMinimum - total), s.unit)} more`}</Badge>}
     >
+      <div className="table-wrap">
       <table className="table">
         <thead><tr><th /><th>Buyer</th><th>Type</th><th>Region</th><th className="num">Quantity</th><th>Needed</th><th className="num">Price</th></tr></thead>
         <tbody>
@@ -55,6 +56,7 @@ function Suggestion({ s, farmId, drops, onCreated }) {
           ))}
         </tbody>
       </table>
+      </div>
       <div className="row-between mt-16">
         <div className="small">
           Pooled total <b>{kg(total, s.unit)}</b> · revenue <b>{money(chosen.reduce((sum, m) => sum + m.quantity * m.unitPrice, 0))}</b>
