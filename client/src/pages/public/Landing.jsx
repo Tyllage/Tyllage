@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../services/api.js';
 import { Icons, Wordmark } from '../../components/Icons.jsx';
@@ -8,9 +8,53 @@ import './landing.css';
 const NAV = [
   ['#how', 'How it works'],
   ['#features', 'Platform'],
+  ['#routes', 'MarketRoute'],
   ['#buyers', 'For buyers'],
   ['#principles', 'Principles'],
 ];
+
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// Elements that fade up as they scroll into view. Siblings are staggered slightly.
+const REVEAL = [
+  '.site-hero-inner > *', '.site-eyebrow', '.site-section h2', '.site-lead', '.site-facts > div', '.site-card', '.site-steps li',
+  '.site-quote', '.site-route-table', '.site-produce-card', '.site-list > div', '.site-principle', '.site-cta-band .site-wrap > *',
+].join(', ');
+
+/** Adds scroll-reveal to elements inside `ref` (skipped entirely when the user prefers reduced motion). */
+function useReveal(ref, deps = []) {
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || reducedMotion() || !('IntersectionObserver' in window)) return undefined;
+    const els = [...root.querySelectorAll(REVEAL)].filter((el) => !el.classList.contains('reveal'));
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          e.target.classList.add('is-visible');
+          io.unobserve(e.target);
+        }
+      }
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.12 });
+    for (const el of els) {
+      const index = [...el.parentElement.children].indexOf(el);
+      el.style.setProperty('--reveal-delay', `${Math.min(index, 6) * 70}ms`);
+      el.classList.add('reveal');
+      io.observe(el);
+    }
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+/** Smooth-scrolls to an in-page section, landing below the sticky header. */
+function scrollToHash(e, href) {
+  const target = href === '#top' ? document.body : document.querySelector(href);
+  if (!target) return;
+  e.preventDefault();
+  if (href === '#top') window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+  else target.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  history.replaceState(null, '', href);
+}
 
 const PROBLEMS = [
   ['Demand is fragmented', 'Wholesalers, restaurants, caterers, retailers and households all buy differently — on different prices, volumes and terms.', Icons.Demand],
@@ -118,6 +162,8 @@ function RadarPreview() {
 /** Live produce from farms on Tyllage (public data only — no price floors, farm names or farm-private figures). */
 function GrowingNow() {
   const [items, setItems] = useState(null);
+  const ref = useRef(null);
+  useReveal(ref, [items]);
   useEffect(() => {
     api.get('/marketplace/supply')
       .then((s) => setItems([...s.availableNow, ...s.growingSoon].slice(0, 8)))
@@ -125,7 +171,7 @@ function GrowingNow() {
   }, []);
   if (!items?.length) return null;
   return (
-    <section className="site-section site-alt" id="growing">
+    <section className="site-section site-alt" id="growing" ref={ref}>
       <div className="site-wrap">
         <div className="site-eyebrow">On Tyllage now</div>
         <h2>Harvests coming up on the platform</h2>
@@ -148,17 +194,43 @@ function GrowingNow() {
 
 export default function Landing() {
   const [menu, setMenu] = useState(false);
+  const [active, setActive] = useState(null);
+  const [scrolled, setScrolled] = useState(false);
+  const root = useRef(null);
+  useReveal(root);
+
   useEffect(() => {
     document.title = 'Tyllage — From Harvest to Demand';
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // Highlight the nav link of the section currently in view.
+  useEffect(() => {
+    if (!('IntersectionObserver' in window)) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) setActive(`#${e.target.id}`);
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    NAV.forEach(([href]) => { const el = document.querySelector(href); if (el) io.observe(el); });
+    return () => io.disconnect();
+  }, []);
+
+  const go = (e, href) => {
+    setMenu(false);
+    scrollToHash(e, href);
+  };
+
   return (
-    <div className="site">
-      <header className="site-header">
+    <div className="site" ref={root}>
+      <header className={`site-header ${scrolled ? 'scrolled' : ''}`}>
         <div className="site-wrap site-header-inner">
-          <a href="#top" className="site-logo" aria-label="Tyllage home"><Wordmark height={34} /></a>
+          <a href="#top" className="site-logo" aria-label="Tyllage home" onClick={(e) => go(e, '#top')}><Wordmark height={34} /></a>
           <nav className={`site-nav ${menu ? 'open' : ''}`} aria-label="Website">
-            {NAV.map(([href, text]) => <a key={href} href={href} onClick={() => setMenu(false)}>{text}</a>)}
+            {NAV.map(([href, text]) => (
+              <a key={href} href={href} onClick={(e) => go(e, href)} className={active === href ? 'active' : undefined} aria-current={active === href ? 'location' : undefined}>{text}</a>
+            ))}
             <Link to="/login" className="site-btn site-btn-ghost">Sign in</Link>
             <Link to="/register" className="site-btn">Join as a buyer</Link>
           </nav>
@@ -240,21 +312,28 @@ export default function Landing() {
           </div>
         </section>
 
-        <section className="site-section site-dark">
-          <div className="site-wrap site-split">
-            <div>
-              <div className="site-eyebrow">MarketRoute</div>
-              <h2>The biggest buyer is not always the best outcome</h2>
-              <p className="site-lead">
-                Before matching individual buyers, Tyllage compares routes on demand, price, volume, who carries the logistics and what margin is left after
-                fulfilment. Then it ranks buyers inside the route you choose.
-              </p>
-            </div>
-            <div className="site-table-wrap">
+        <section className="site-section site-dark" id="routes">
+          <div className="site-wrap">
+            <div className="site-eyebrow">MarketRoute</div>
+            <h2>The biggest buyer is not always the best outcome</h2>
+            <p className="site-lead">
+              Before matching individual buyers, Tyllage compares routes on demand, price, volume, who carries the logistics and what margin is left after
+              fulfilment. Then it ranks buyers inside the route you choose.
+            </p>
+            <div className="site-route-table">
               <table className="site-table">
-                <thead><tr><th>Route</th><th>Demand</th><th>Price</th><th>Volume</th><th>Fulfilment</th><th>Fit</th></tr></thead>
+                <thead><tr><th>Route</th><th>Demand</th><th>Price</th><th>Volume</th><th>Fulfilment</th><th>Commercial fit</th></tr></thead>
                 <tbody>
-                  {ROUTES.map((r) => <tr key={r[0]}>{r.map((c, i) => <td key={i}>{c}</td>)}</tr>)}
+                  {ROUTES.map(([route, demand, price, volume, fulfilment, fit]) => (
+                    <tr key={route}>
+                      <td data-label="Route">{route}</td>
+                      <td data-label="Demand">{demand}</td>
+                      <td data-label="Price">{price}</td>
+                      <td data-label="Volume">{volume}</td>
+                      <td data-label="Fulfilment">{fulfilment}</td>
+                      <td data-label="Commercial fit"><span className={`site-fit fit-${fit.toLowerCase().replace(/[^a-z]/g, '')}`}>{fit}</span></td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
               <p className="site-source">Illustrative comparison. Real scores come from each farm&apos;s own demand, prices and costs.</p>
@@ -328,7 +407,7 @@ export default function Landing() {
             <p>Demand &amp; market access platform for local farms.<br />Commercial intelligence · Market coordination · Demand recovery.</p>
           </div>
           <nav aria-label="Footer">
-            {NAV.map(([href, text]) => <a key={href} href={href}>{text}</a>)}
+            {NAV.map(([href, text]) => <a key={href} href={href} onClick={(e) => scrollToHash(e, href)}>{text}</a>)}
             <Link to="/login">Sign in</Link>
           </nav>
         </div>
