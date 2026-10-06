@@ -38,12 +38,15 @@ export const Icons = {
   Arrow: (p) => <Icon {...p}><path d="M5 12h14M13 6l6 6-6 6" /></Icon>,
 };
 
+/** Tyllage app icon: the circular leaf-and-field emblem on a white disc (reads on light and dark backgrounds). */
 export function Logo({ size = 30 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="#1f5c45" />
-      <path d="M8 22h16M8 17h16M8 12h10" stroke="#e6f0eb" strokeWidth="2.6" strokeLinecap="round" />
-      <circle cx="22.5" cy="11" r="2.6" fill="#d9a441" />
-    </svg>
+    <img src="/brand/tyllage-icon-192.png" width={size} height={size} alt="" aria-hidden="true"
+      style={{ display: 'block', flexShrink: 0, borderRadius: '50%' }} />
   );
+}
+
+/** Full Tyllage lockup (emblem + wordmark) for light backgrounds. */
+export function Wordmark({ height = 34 }) {
+  return <img src="/brand/tyllage-logo.png" alt="Tyllage" height={height} style={{ display: 'block', height, width: 'auto' }} />;
 }

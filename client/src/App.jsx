@@ -7,6 +7,7 @@ import StatusPage from './components/StatusPage.jsx';
 import StatusCodes from './pages/status/StatusCodes.jsx';
 import Login from './pages/auth/Login.jsx';
 import Register from './pages/auth/Register.jsx';
+import Landing from './pages/public/Landing.jsx';
 import FarmOverview from './pages/farm/Overview.jsx';
 import Harvests from './pages/farm/Harvests.jsx';
 import HarvestDetail from './pages/farm/HarvestDetail.jsx';
@@ -82,7 +83,8 @@ export default function App() {
       <Route path="/login" element={user ? <Navigate to={homePathFor(user)} replace /> : <Login />} />
       <Route path="/status" element={<StatusCodes />} />
       <Route path="/status/:code" element={<StatusCodeRoute />} />
-      <Route path="/" element={<Navigate to={homePathFor(user)} replace />} />
+      {/* Public website for visitors; signed-in users go straight to their workspace. */}
+      <Route path="/" element={user ? <Navigate to={homePathFor(user)} replace /> : <Landing />} />
       <Route path="/register" element={user ? <Navigate to={homePathFor(user)} replace /> : <Register />} />
 
       <Route element={<RequireRole><AppShell /></RequireRole>}>

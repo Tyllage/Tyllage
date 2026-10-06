@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Logo } from '../components/Icons.jsx';
 
 // Proposal v3 core workflow.
@@ -8,13 +9,13 @@ export default function AuthLayout({ children }) {
     <div className="auth-page">
       <aside className="auth-side">
         <div>
-          <div className="row" style={{ gap: 12 }}>
+          <Link to="/" className="row" style={{ gap: 12 }} aria-label="Tyllage website">
             <Logo size={36} />
             <div>
               <div style={{ color: '#fff', fontWeight: 700, fontSize: 18 }}>Tyllage</div>
               <div style={{ fontSize: 12, color: '#8fa89b' }}>From Harvest to Demand.</div>
             </div>
-          </div>
+          </Link>
           <h1>Decide where upcoming harvest should go — before it becomes a commercial problem.</h1>
           <div className="loop">
             {LOOP.map((step, i) => (
@@ -30,7 +31,10 @@ export default function AuthLayout({ children }) {
         </div>
       </aside>
       <main className="auth-main">
-        <div className="auth-card">{children}</div>
+        <div className="auth-card">
+          <Link to="/" className="small" style={{ display: 'inline-block', marginBottom: 18 }}>← Back to the Tyllage website</Link>
+          {children}
+        </div>
       </main>
     </div>
   );
