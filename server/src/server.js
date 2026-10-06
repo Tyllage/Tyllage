@@ -10,6 +10,15 @@ async function start() {
     await runMigrations();
   }
 
+  // Opt-in for pilot/demo deployments: seed DEMO data only when the database has no farms yet.
+  if (process.env.SEED_DEMO_ON_START === 'true') {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM farms');
+    if (rows[0].n === 0) {
+      const { seed } = await import('./seed/seed.js');
+      await seed();
+    }
+  }
+
   await loadPolicies();
   const app = createApp();
   const server = app.listen(env.PORT, () => {

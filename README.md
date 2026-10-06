@@ -383,7 +383,7 @@ The repo deploys as **one Railway service** plus a **Railway PostgreSQL** databa
    - `JWT_SECRET` (≥ 32 random characters)
    - optionally `OPENAI_API_KEY`, `WHATSAPP_*`
    - `CLIENT_URL` only if the client is hosted elsewhere
-4. Optional demo data: run `npm run seed --prefix server` once with `ALLOW_DEMO_SEED=true`, e.g. via `railway run`.
+4. Optional demo data: set `SEED_DEMO_ON_START=true`. The server seeds the fictional pilot data on boot only when the database has no farms, so restarts never reseed. Set `VITE_SHOW_DEMO_ACCOUNTS=true` to show the demo-account picker on the login page; it is read at build time, so redeploy after setting it.
 
 The frontend never assumes localhost. It calls same-origin `/api`, or `VITE_API_URL` when built for a separate host. Set `RUN_MIGRATIONS_ON_START=false` if you prefer to run `npm run migrate` as a separate release step.
 
