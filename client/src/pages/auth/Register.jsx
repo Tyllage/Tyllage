@@ -5,7 +5,7 @@ import { useAuth, homePathFor } from '../../context/AuthContext.jsx';
 import { Field, fieldErrors } from '../../components/ui.jsx';
 import { label } from '../../utils/format.js';
 
-const BUSINESS_TYPES = ['RESTAURANT', 'CAFE', 'HOTEL', 'CATERER', 'RETAILER', 'WHOLESALER'];
+const BUSINESS_TYPES = ['RESTAURANT', 'CAFE', 'HOTEL', 'CATERER', 'RETAILER', 'WET_MARKET', 'WHOLESALER'];
 const REGIONS = ['CENTRAL', 'NORTH', 'NORTH_EAST', 'EAST', 'WEST'];
 
 export default function Register() {

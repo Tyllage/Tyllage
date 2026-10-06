@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { useAuth, homePathFor, FARM_SIDE_ROLES } from './context/AuthContext.jsx';
-import { Loading } from './components/ui.jsx';
+import { Loading, EmptyState } from './components/ui.jsx';
+import { useFarm } from './context/FarmContext.jsx';
 import AppShell from './layouts/AppShell.jsx';
 import StatusPage from './components/StatusPage.jsx';
 import StatusCodes from './pages/status/StatusCodes.jsx';
@@ -11,6 +12,7 @@ import Harvests from './pages/farm/Harvests.jsx';
 import HarvestDetail from './pages/farm/HarvestDetail.jsx';
 import Demand from './pages/farm/Demand.jsx';
 import HarvestMatch from './pages/farm/HarvestMatch.jsx';
+import MarketRoute from './pages/farm/MarketRoute.jsx';
 import FarmOrders from './pages/farm/Orders.jsx';
 import Recovery from './pages/farm/Recovery.jsx';
 import Rescue from './pages/farm/Rescue.jsx';
@@ -48,6 +50,19 @@ function RequireRole({ roles, children }) {
   return children;
 }
 
+/** FarmPool / DemandPool are Post-MVP (proposal v3 Phase 3): shown only when the platform preview is enabled. */
+function RequireNetworkPreview({ children }) {
+  const { features } = useFarm();
+  if (!features.networkFeaturesEnabled) {
+    return (
+      <EmptyState title="Phase 3 network preview">
+        FarmPool and DemandPool are planned for Phase 3 (network expansion), after the ComCrop MVP is validated. A platform admin can enable the preview in Policies.
+      </EmptyState>
+    );
+  }
+  return children;
+}
+
 /** /status/:code — design preview of the page for any HTTP status code. */
 function StatusCodeRoute() {
   const { code } = useParams();
@@ -75,6 +90,7 @@ export default function App() {
         <Route path="/farm/harvests" element={<RequireRole roles={FARM_SIDE_ROLES}><Harvests /></RequireRole>} />
         <Route path="/farm/harvests/:id" element={<RequireRole roles={FARM_SIDE_ROLES}><HarvestDetail /></RequireRole>} />
         <Route path="/farm/demand" element={<RequireRole roles={FARM_SIDE_ROLES}><Demand /></RequireRole>} />
+        <Route path="/farm/marketroute" element={<RequireRole roles={FARM_SIDE_ROLES}><MarketRoute /></RequireRole>} />
         <Route path="/farm/harvestmatch" element={<RequireRole roles={FARM_ADMINS}><HarvestMatch /></RequireRole>} />
         <Route path="/farm/orders" element={<RequireRole roles={FARM_SIDE_ROLES}><FarmOrders /></RequireRole>} />
         <Route path="/farm/recovery" element={<RequireRole roles={FARM_ADMINS}><Recovery /></RequireRole>} />
@@ -89,8 +105,8 @@ export default function App() {
         <Route path="/admin/disputes" element={<RequireRole roles={['platform_admin']}><AdminDisputes /></RequireRole>} />
         <Route path="/admin/audit" element={<RequireRole roles={['platform_admin']}><AdminAuditLog /></RequireRole>} />
 
-        <Route path="/farm/farmpool" element={<RequireRole roles={FARM_ADMINS}><FarmPool /></RequireRole>} />
-        <Route path="/farm/demandpool" element={<RequireRole roles={FARM_ADMINS}><DemandPool /></RequireRole>} />
+        <Route path="/farm/farmpool" element={<RequireRole roles={FARM_ADMINS}><RequireNetworkPreview><FarmPool /></RequireNetworkPreview></RequireRole>} />
+        <Route path="/farm/demandpool" element={<RequireRole roles={FARM_ADMINS}><RequireNetworkPreview><DemandPool /></RequireNetworkPreview></RequireRole>} />
 
         <Route path="/market/farms" element={<RequireRole roles={[...BUYERS, ...CONSUMERS]}><FarmDirectory /></RequireRole>} />
         <Route path="/market/farms/:id" element={<RequireRole roles={[...BUYERS, ...CONSUMERS]}><FarmProfile /></RequireRole>} />

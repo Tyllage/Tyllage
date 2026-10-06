@@ -6,7 +6,7 @@ import { PageHeader, Card, AsyncBoundary, Field, Badge, fieldErrors } from '../.
 import { label } from '../../utils/format.js';
 
 const REGIONS = ['CENTRAL', 'NORTH', 'NORTH_EAST', 'EAST', 'WEST'];
-const COLLECTION_METHODS = ['FARM_PICKUP', 'DELIVERY', 'COMMUNITY_DROP'];
+const COLLECTION_METHODS = ['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'];
 const TEXT_FIELDS = ['organisationName', 'contactName', 'contactEmail', 'contactPhone', 'address'];
 
 function ProfileForm({ profile, onSaved }) {

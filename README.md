@@ -2,43 +2,50 @@
 
 **From Harvest to Demand.**
 
+*Demand & Market Access Platform for Local Farms — Commercial Intelligence · Market Coordination · Demand Recovery*
+
 ## Overview
 
-Tyllage is a local-farm demand and market-access platform. It is currently being developed as a **ComCrop-focused pilot**, while remaining architected for future **multi-farm expansion**.
+Tyllage is a farm commercial-intelligence and coordination platform. It brings expected harvest, buyer demand, sales routes, fulfilment conditions, margin and recovery options into one farm-facing view. It is developed as a **ComCrop-focused pilot** (proposal v3) and architected for **multi-farm expansion**.
+
+Tyllage does not replace SAFEF initiatives, wholesalers, logistics providers, retailers or farm-management systems. It treats them as routes, fulfilment partners and data sources to compare.
 
 > **Industry-wide opportunity, ComCrop-first validation.**
 > All ComCrop data in this repository is **fictional DEMO / PILOT DATA**. It does not represent ComCrop's actual production, customers, prices, revenue, costs or commercial agreements.
 
 ### Problem
 
-Singapore's local farms can grow quality produce yet still struggle commercially: demand is fragmented, upcoming demand is hard to see, produce has a short shelf life, buyers cancel at short notice, sales rely on a few channels, and B2B buyers are hard to reach. Produce ends up unsold, heavily discounted or wasted.
+Singapore farms face structurally higher land, labour and energy costs than regional farms, while demand is fragmented across wholesale, food-service, retail, community and direct channels. Wholesale aggregation, shared logistics, premium positioning and institutional sales each solve part of the problem. Farms still lack one way to compare commercial routes, see demand coverage, judge fulfilment conditions and recover displaced inventory.
 
-The question Tyllage addresses is **not** "how can farms grow more?" It is:
+The question is not only "can we sell this harvest?" but:
 
-> How can farms better connect what they expect to harvest with suitable demand, before produce becomes unsold, heavily discounted or wasted?
+> Which route gives this harvest the strongest viable outcome?
 
-### Solution: the MVP loop
+### Solution: the core workflow (proposal v3 §7)
 
 ```
-Expected Harvest → Existing Demand → Demand Coverage → HarvestMatch → Farmer Approval
-→ Allocation / Order → Remaining Produce → Demand Recovery → Rescue / Alternative Channel → Analytics
+Record expected harvest → Capture demand → Demand coverage → Compare routes (MarketRoute)
+→ HarvestMatch within the route → Farmer approves allocation → Monitor exposure
+→ Demand Recovery (Primary → Alternative → Rescue → Final disposition) → Insights
 ```
 
 | Module | What it does |
 |---|---|
-| **Farm Dashboard** | Answers four questions: what are we harvesting, how much has demand, what may remain unsold, and what needs action. |
+| **Demand Radar** | Expected harvest against confirmed and potential demand, per produce and per batch, with the recommended route for whatever is still exposed. |
 | **Demand Coverage** | `Confirmed Demand ÷ Expected Harvest × 100`, calculated live from real allocations. Rule-based risk: ≥80% LOW · 50–79% MEDIUM · <50% HIGH. |
-| **HarvestMatch** | Transparent weighted scoring that ranks existing buyer demand against a batch, with reasons for every recommendation. Not machine learning. |
-| **Allocations / Orders** | Approving a match creates order + order item + allocation in one transaction. Over-allocation is impossible. |
-| **Demand Recovery** | Re-matches leftover produce after cancellations or surplus, excluding invalid demand, and suggests next steps for the farmer to approve. |
-| **Tyllage Rescue** | An alternative channel for produce the farm has itself judged suitable for sale. |
-| **Tyllage Connect** | OpenAI-assisted outreach copy, built only from backend-approved facts. The farm reviews, edits and approves it. |
+| **MarketRoute** | Compares routes for each batch (restaurants & cafés, hotels & caterers, wholesale, retail & wet markets, community & D2C, Rescue) with a transparent **Commercial Route Score**, and proposes a route plan for the remaining quantity. It does not assume the highest-volume buyer is the best outcome. |
+| **HarvestMatch** | Once a route is selected, ranks the buyers *within* it, using transparent weighted scoring with reasons. It can also run across all routes. Not machine learning. |
+| **Margin Guard** | Compares selling price, minimum viable price, production cost and **estimated fulfilment cost** (per route and per order) before a route is recommended. Farm-private. |
+| **Allocations / Orders** | Approving a match creates order + order item + allocation in one transaction, with fulfilment terms and estimated fulfilment cost. Over-allocation is impossible. |
+| **Demand Recovery** | Re-runs route comparison and buyer matching against the remaining eligible channels, and shows the stage: **Primary route → Alternative route → Rescue route → Final disposition record**. |
+| **Tyllage Rescue** | An alternative route for produce the farm has itself judged suitable for sale. Tyllage does not determine food safety. |
+| **Tyllage Connect** | Approved outreach (OpenAI-assisted or template), which can target the buyers of one route. The backend controls inventory, prices, recipients and approvals. |
+| **Tyllage Insights** | Which crops achieve stronger coverage, which routes preserve margin after fulfilment, which buyers reorder, and which routes recover surplus. Includes the pilot success framework. |
 | **WhatsApp** | Cloud API integration with a full mock mode. |
-| **Analytics** | Every metric is derived from database records. Where data is thin, the UI says "Not enough data yet". |
 
 ### ComCrop-first validation strategy
 
-The MVP validates one question: *can Tyllage help ComCrop gain better visibility of demand and match expected harvest with suitable buyers before produce becomes commercially at risk?*
+The pilot tests whether better demand visibility, commercial-route comparison, buyer matching and recovery workflows create measurable value (proposal v3 §11). The pilot questions are: how much upcoming harvest already has confirmed demand, which channel is the strongest commercial fit for the rest, whether that route stays viable after price and fulfilment, whether Tyllage finds an alternative when a route fails, and what data becomes useful for future crop and channel decisions.
 
 - The UX is optimised for a ComCrop-style urban vegetable farm, using pilot demo data.
 - The backend is multi-farm from day one. Every farm-owned record carries `farm_id`, every farm-sensitive route checks access server-side, and a second demo farm ("Farm B") is seeded to prove isolation.
@@ -72,6 +79,7 @@ No Python in the MVP. A Python AI/ML microservice is planned for later phases (s
    ├─ routes/        URL → middleware (verifyToken, requireRole, requireFarmAccess) → controller
    ├─ controllers/   thin: parse params, call a service, shape { success, data }
    ├─ services/      business logic and authorisation on loaded records
+   │    marketRouteService (route comparison) · fulfilmentService (terms + cost estimates)
    │    harvestMatchService (pure scoring + persistence) · allocationService (locked transactions)
    │    recoveryService · rescueService · analyticsService · riskService · campaignService
    │    openaiService (copy only) · whatsappService (mock/live) · auditService · notificationService
@@ -101,7 +109,7 @@ tyllage/
 │   ├── src/
 │   │   ├── config/             env.js, db.js, rules.js
 │   │   ├── controllers/        index.js
-│   │   ├── db/                 migrate.js, migrations/001_init.sql
+│   │   ├── db/                 migrate.js, migrations/ (001 baseline, 002 proposal features, 003 MarketRoute)
 │   │   ├── middleware/         auth.js (verifyToken, requireRole, requireFarmAccess), errorHandler.js
 │   │   ├── models/             harvestModel.js
 │   │   ├── routes/             one router per API group
@@ -225,15 +233,33 @@ In development builds the login page also shows a one-click demo-account picker.
 
 ## The MVP demo story
 
-1. Sign in as **farmadmin@comcrop.demo**. The dashboard shows **Kale: 70kg expected, 24kg confirmed, 34.3% coverage, HIGH risk, 46kg unallocated**.
-2. Click **Run HarvestMatch**. Tyllage ranks Restaurant A (95%), Hotel B (82%) and Community Buyer C (77%), plus a weak Consumer G match (63%). Each comes with reasons and a factor breakdown. **Not recommended** explains the exclusions: Caterer E's price is below the farm minimum, and Wholesaler H cancelled an order on this batch.
-3. Select the top three and click **Approve selected**. Orders are created and Kale becomes **70 expected / 65 allocated / 5 remaining** (92.9% coverage, LOW).
-4. Click **Recover demand**. No strong normal-market demand remains, so Tyllage suggests **Move 5kg to Rescue**.
-5. Create the Rescue listing. The farm must tick the suitability-for-sale confirmation.
-6. Click **Generate Rescue campaign**. Tyllage Connect drafts the message. Review or edit it, then **Approve**. Sending is a separate, explicit step; in mock mode messages appear in **Campaigns → WhatsApp message log**.
-7. Back on the dashboard, Demand Coverage, Rescue Quantity and remaining risk have updated. **Analytics** shows sell-through, conversion and the other metrics.
+1. Sign in as **farmadmin@comcrop.demo**. The **Demand Radar** shows coverage by produce (proposal §8.1) and **Kale: 70kg expected, 24kg confirmed, 34.3% coverage, HIGH risk, 46kg unallocated**, with MarketRoute's recommended route.
+2. Click **Compare routes**. MarketRoute scores every route for the 46kg: Hotels & caterers (Hotel B, 18kg, buyer pickup), Restaurants & cafés (Restaurant A, 15kg, farm delivery at about $1.20/kg), Community & D2C (11kg), Wholesale and Retail (no eligible demand yet, so **Draft outreach**), and Rescue. Each route shows its price, fulfilment terms and cost, margin after fulfilment, and a **Why** breakdown. The route plan fills 18 → 15 → 11 → 2kg (Rescue).
+3. **Select & match** the recommended route. It is recorded as the **primary route**, and HarvestMatch ranks only that route's buyers. Caterer E is listed as not recommended because its price is below the farm minimum.
+4. Approve. The order records its fulfilment terms and estimated fulfilment cost.
+5. Click **Recover demand**. The ladder moves to **Alternative route**: Restaurants & cafés and Community & D2C can absorb the rest, with Rescue for the final kilograms.
+6. Create the Rescue listing (the farm must tick the suitability-for-sale confirmation) and **Generate Rescue campaign** in Tyllage Connect. Sending is a separate, explicit step; in mock mode messages appear in **Connect → WhatsApp message log**.
+7. **Insights** shows route performance (net margin after fulfilment, cancellation rate, recovered kg), coverage by crop, buyer reorders and the seven pilot KPIs against baselines the farm records.
 
-## Business rules (transparent, configurable in `server/src/config/rules.js`)
+## Business rules (transparent, configurable in `server/src/config/rules.js` and live in Admin → Policies)
+
+**MarketRoute: Commercial Route Score** (sum 100; `server/src/services/marketRouteService.js`):
+
+| Factor | Weight | Rule |
+|---|---|---|
+| Demand fit | 25 | Share of the unallocated quantity that eligible open demand in the route can absorb (same exclusions as HarvestMatch). Rescue uses a fixed, conservative 20 |
+| Price | 15 | Achievable price ≥ preferred = 100; minimum..preferred scales 50–100; below the farm minimum scales 0–40 |
+| Margin | 20 | Margin after production cost **and estimated fulfilment cost**; loss = 0; twice the farm minimum margin (at least 20%) = 100; unknown cost = neutral |
+| Volume | 10 | Average order size ÷ 20kg (fewer, larger orders = fewer fulfilment runs) |
+| Logistics | 10 | Buyer pickup 100 · central drop 75 · collection point 65 · farm delivery 50 |
+| Reliability | 10 | Quantity-weighted buyer reliability (neutral without history) |
+| Urgency | 10 | Route lead time vs remaining shelf-life window: within half = 100, within = 70, beyond = 30 |
+
+Routes with live demand use the actual requests (price, buyer's fulfilment terms, required dates). Routes without demand use a documented route profile (typical price share, order size, lead time, default fulfilment) and offer **outreach** instead. A route that sells below cost after fulfilment is **Not viable**. A route excluded by the batch's commercial constraints (allowed routes) is **Excluded**. Past the shelf-life window, only a final disposition is suggested.
+
+**Fulfilment terms and cost**: buyer pickup (buyer logistics), central drop (shared with a distribution partner), collection point and farm delivery (farm logistics). Each farm records per-order and per-kg cost estimates in **Settings**; until then demo defaults apply. Every order stores its estimated fulfilment cost, which is never shown to buyers.
+
+**Recovery stages**: PRIMARY while the farm's primary route still has strong demand, ALTERNATIVE when only other routes do, then RESCUE, and finally FINAL_DISPOSITION once produce is past its commercial window.
 
 **HarvestMatch weights** (sum 100):
 
@@ -255,6 +281,9 @@ Recommended quantities are assigned greedily in score order, so their total neve
 | Metric | Formula |
 |---|---|
 | Sell-through | Sold quantity (confirmed/ready/completed) ÷ actual harvest (batches harvested to date) × 100 |
+| Average margin / kg | Σ ((unit price − production cost) × qty − fulfilment cost) ÷ Σ qty, over sales with a recorded cost |
+| Waste / at-risk quantity | Harvest − quantity sold, for batches that are closed or past their shelf-life window |
+| Route performance | Per route: revenue, avg price/kg, fulfilment/kg, net margin/kg, cancellation rate, kg sold after recovery started |
 | Demand coverage | Confirmed demand ÷ expected harvest (actual once recorded) × 100 |
 | Rescue rate | Recovered at-risk produce ÷ total at-risk produce × 100. At-risk = unallocated quantity when Demand Recovery first ran on a batch; recovered = quantity allocated or reserved after that point |
 | Channel concentration | Revenue from largest buyer ÷ total revenue × 100 |
@@ -270,19 +299,19 @@ All responses use `{ "success": true, "data": … }` or `{ "success": false, "me
 | `/api/auth` | `POST /register` (buyer roles only) · `POST /login` · `GET /me` |
 | `/api/farms` | `GET /` · `POST /` (platform admin) · `GET/PATCH /:farmId` · `GET /:farmId/dashboard` · `GET /:farmId/team` · `POST /:farmId/users` (platform admin) · `GET/POST /:farmId/buyers` · `GET /:farmId/audit-logs` · `GET /:farmId/whatsapp-log` |
 | `/api/produce` | `GET ?farmId` · `POST` · `GET/PATCH /:id` |
-| `/api/harvests` | `GET ?farmId` · `POST` · `GET/PATCH /:id` · `POST /:id/mark-available` · `POST /:id/close` · **`POST /:id/run-matching`** · **`GET /:id/matches`** |
+| `/api/harvests` | `GET ?farmId` · `POST` · `GET/PATCH /:id` (incl. `allowedRoutes`) · `POST /:id/mark-available` · `POST /:id/close` · **`GET /:id/routes`** (MarketRoute) · **`POST /:id/routes/select`** `{ route }` · **`POST /:id/run-matching`** `{ route? }` · **`GET /:id/matches`** |
 | `/api/demand` | `GET` (farm: `?farmId`; buyer: own) · `POST` · `GET/PATCH /:id` · `POST /:id/cancel` |
 | `/api/matches` | `GET` · `POST /:id/approve` `{ quantity? }` · `POST /:id/reject` `{ reason? }` |
 | `/api/orders` | `GET` · `GET /:id` · `PATCH /:id/status` `{ status, reason? }` |
 | `/api/recovery` | `GET ?farmId` (candidates and triggers) · `POST /harvests/:id/start` · `GET /harvests/:id` |
 | `/api/rescue` | `GET /public` · `GET ?farmId` · `POST` · `PATCH /:id` · `POST /:id/cancel` · `POST /:id/reserve` |
-| `/api/campaigns` | `GET ?farmId` · `POST /generate` · `GET/PATCH /:id` · `POST /:id/approve` · `POST /:id/send` · `POST /:id/cancel` |
+| `/api/campaigns` | `GET ?farmId` · `POST /generate` (optional `targetRoute`) · `GET/PATCH /:id` · `POST /:id/approve` · `POST /:id/send` · `POST /:id/cancel` |
 | `/api/analytics` | `GET ?farmId` |
 | `/api/community-drops` | `GET /upcoming` · `GET ?farmId` · `POST` · `PATCH /:id/status` · `POST /:id/join` |
 | `/api/marketplace` | `GET /supply` · `GET /farms` (public; never exposes minimum prices) |
 | `/api/users` | `GET` · `PATCH /:id/active` (platform admin) |
-| `/api/farmpool` | `GET ?farmId` · `POST /:demandId/contribute` |
-| `/api/demandpool` | `GET ?farmId` · `GET /suggestions?farmId` · `POST` |
+| `/api/farmpool` | `GET ?farmId` · `POST /:demandId/contribute` (Phase 3 preview: 409 `FEATURE_NOT_ENABLED` until enabled) |
+| `/api/demandpool` | `GET ?farmId` · `GET /suggestions?farmId` · `POST` (Phase 3 preview) |
 | `/api/orders` (new) | `POST` direct/bulk order (buyers) · `POST /:id/disputes` |
 | `/api/disputes` | `GET` (own/farm/all) · `PATCH /:id` (platform admin resolves) |
 | `/api/harvests/:id/dispositions` | `GET` · `POST` (donation / alternative use / waste) |
@@ -290,7 +319,7 @@ All responses use `{ "success": true, "data": … }` or `{ "success": false, "me
 | `/api/ai` | `GET /status` · `POST /matches/:id/explain` · `POST /insights` · plus `POST /api/campaigns/:id/variations`, `GET /api/rescue/price-suggestion` |
 | `/api/admin` | `GET/PATCH /policies` · `GET /audit-logs` (platform admin) |
 | `/api/marketplace/farms/:id` | Public farm profile |
-| misc | `GET /api/health` · `GET/PATCH /api/buyers/me` · `GET /api/notifications` · `POST /api/notifications/:id/read` · `GET/POST /api/whatsapp/webhook` |
+| misc | `GET /api/health` · `GET /api/features` · `GET/PATCH /api/buyers/me` · `GET /api/notifications` · `POST /api/notifications/:id/read` · `GET/POST /api/whatsapp/webhook` |
 
 ### Roles
 
@@ -302,27 +331,29 @@ All responses use `{ "success": true, "data": … }` or `{ "success": false, "me
 | `business_buyer` | Register demand, view supply, matches and own orders, cancel own pending/confirmed orders |
 | `consumer` | Browse supply and Rescue, register interests, reserve Rescue, join Community Drops, own orders |
 
-## Proposal feature coverage
+## Proposal v3 coverage
 
-Everything described in both proposal documents (`Tyllage_Final`, `Tyllage_Proposal`) is in the prototype, except the business model and the Phase 2–4 roadmap:
+The prototype follows **Tyllage_Proposal_v3** (ComCrop-first validation). Its MVP "must have" list is all built:
 
-| Proposal item | Where in the prototype |
+| Proposal v3 item | Where in the prototype |
 |---|---|
-| Demand Radar (expected / confirmed / **potential** demand / risk) | Farm **Overview** — Potential Demand = open, unconfirmed demand whose produce and timing fit each batch |
-| HarvestMatch incl. **minimum order quantity**, previous purchases, shelf life | Farm minimum order per produce (Settings → Produce) and buyer minimum delivery (`minQuantity`) are enforced in scoring and on approval |
-| Proposal lens: margin, urgency, purchase likelihood | Shown on every match as decision-support chips. The official score stays the Final document's additive formula |
-| Demand Recovery channels (restaurant network, hotel, existing customers, community, consumers, Rescue) | Recovery panel: five channels plus the existing-customer and subscriber split; DemandPool and donation suggestions |
-| Rescue segments incl. **Chef Pack** | Harvest grade `CHEF_PACK` |
-| **Margin Guard** | Farm-private production cost per batch and minimum margin per farm. Shown on batches, on matches and in the Rescue price check |
-| **Dynamic Perishable Inventory Routing** | Shelf life per crop gives stages Premium → Community → Rescue → Clearance → Donation. Routing card on each batch, dashboard alerts, donation / alternative-use / waste records |
-| **FarmPool** (many farms → one buyer) | Network → FarmPool. Buyers opt in with "Allow FarmPool"; each farm commits from its own batch; partner farms are anonymised |
-| **DemandPool** (many buyers → one viable order) | Network → DemandPool. Small requests below the farm minimum are pooled atomically, optionally through a Community Drop |
-| Bulk orders (business buyers) and purchases (consumers) | Available Supply cart (multi-line) and Buy on Available Now / Growing Soon. Orders start PENDING until the farm confirms |
-| Farm Profiles | Marketplace → Farms (`/market/farms`) |
-| Platform admin: policies, disputes, security | Admin → Policies (live-editable business rules), Disputes, Audit log (including sign-in events) |
-| KPIs: **Demand Recovery Time**, **Waste Avoided**, **Average Margin per kg** | Analytics. Each shows "Not enough data yet" until real records exist |
-| Pilot success framework (baseline vs pilot vs change) | Analytics → Pilot success framework. Baselines are entered by the farm, never invented |
-| AI: explanations, demand-insight summaries, campaign variations, pricing support | "Explain with AI", the AI demand insights card and campaign variations. **Simulated without an OpenAI key**: the UI labels the output "Simulated" and shows the exact prompt that would be sent. Pricing support is rule-based and labelled as such |
+| §8.1 Demand Radar | **Demand Radar** (farm home): coverage by produce (expected / confirmed / unallocated / risk) plus the batch table with potential demand and the recommended route |
+| §8.2 MarketRoute and Commercial Route Score | **MarketRoute** page (all exposed batches, route plans, scoring rules, routes compared) and the route comparison on each batch |
+| §8.3 HarvestMatch within a route | Selecting a route runs HarvestMatch on that route's buyers. Matches carry their route |
+| §8.4 Margin Guard incl. logistics | Farm fulfilment cost estimates (Settings); margin after fulfilment on every route and match; Margin Guard card per batch |
+| §8.5 Demand Recovery stages | Recovery panel ladder: Primary → Alternative → Rescue → Final disposition; route plan over the remaining eligible routes |
+| §8.6 Tyllage Rescue | Rescue listings with the farm's suitability confirmation |
+| §8.7 Tyllage Connect | **Connect**: approved outreach, optionally targeted at one route's buyers ("Draft outreach" on a route without demand) |
+| §8.8 Tyllage Insights | **Insights**: route performance, coverage by crop, buyer reorders, revenue trends |
+| §7.1 Commercial constraints | Allowed routes per batch, minimum price, production cost, grade |
+| §12 Pilot success framework | Insights → the seven headline KPIs with the proposal's definitions, baseline "To establish" / pilot "To measure"; baselines are entered by the farm, never invented |
+| §14 Buyer groups | Restaurants/cafés, hotels/caterers, wholesalers, retailers/**wet markets**, consumers/community |
+| §17 Fulfilment terms per route/order | Collection methods incl. **central drop**; estimated fulfilment cost stored per order |
+| §13 AI only for copy and explanations | OpenAI drafts outreach and explanations; simulated and labelled without a key. Pricing support is rule-based |
+
+**Post-MVP (proposal v3 §10 / Phase 3): FarmPool and DemandPool** are kept in the codebase as a **Phase 3 preview**. They are off by default: the API returns `409 FEATURE_NOT_ENABLED`, the navigation hides them, and Recovery does not suggest DemandPool. A platform admin can switch the preview on in **Admin → Policies** for demonstrations.
+
+Not built (later phases): shared-logistics optimisation, predictive demand forecasting, AI price optimisation, IoT / computer vision / yield prediction, digital twin / drones, cross-border/export workflows, advanced market-index intelligence.
 
 ## HTTP status codes
 
@@ -351,7 +382,7 @@ The catalog lives in `client/src/utils/httpStatus.js` and the page in `client/sr
 npm test
 ```
 
-This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and re-seeded per test file. The 98 tests cover:
+This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and re-seeded per test file. The 118 tests cover:
 
 - authentication and incorrect credentials
 - RBAC and farm access isolation, including spoofed `farmId`
@@ -366,7 +397,9 @@ This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and
 - the campaign approve-before-send workflow in mock mode
 - the health endpoint
 - HTTP 400/413/415 handling
-- proposal features: Dynamic Routing, Margin Guard, minimum order quantities, DemandPool, FarmPool (with partner anonymity), bulk orders, dispositions, the new KPIs, baselines, disputes, platform policies and the AI simulation
+- MarketRoute: route scores and plans, fulfilment cost, margin after fulfilment, commercial constraints, route-scoped HarvestMatch, primary/alternative route decisions, recovery stages, route-targeted outreach, Insights by route, and the v3 pilot KPIs
+- the Phase 3 preview gate for FarmPool / DemandPool
+- proposal features: shelf-life urgency stages, Margin Guard, minimum order quantities, DemandPool, FarmPool (with partner anonymity), bulk orders, dispositions, the new KPIs, baselines, disputes, platform policies and the AI simulation
 
 ## Railway deployment
 
@@ -389,27 +422,28 @@ The frontend never assumes localhost. It calls same-origin `/api`, or `VITE_API_
 
 ---
 
-## Current MVP scope
+## Current MVP scope (proposal v3 Phase 1, ComCrop MVP)
 
-**Built (P0):** auth + RBAC, farm dashboard, produce, harvests, buyers and demand, Demand Coverage and risk, HarvestMatch, allocations and orders, Demand Recovery, Tyllage Rescue, analytics.
-**Built (P1):** Tyllage Connect (OpenAI/mock), WhatsApp Cloud API service (mock/live), Community Drops, buyer portal, consumer portal, platform admin.
+**Built:** auth + RBAC, Demand Radar, harvests and commercial constraints, buyer demand, demand coverage, MarketRoute, HarvestMatch, Margin Guard with fulfilment cost, allocations and orders, Demand Recovery stages, Tyllage Rescue, Tyllage Connect (OpenAI/mock, WhatsApp mock/live), Insights and the pilot success framework, buyer and consumer portals, platform admin.
 
-**Deliberately not built:** ML forecasting, IoT, drones, computer vision, robotic harvesting, FarmPool/DemandPool, a payment gateway, route optimisation, a native mobile app, blockchain, a digital twin, and pricing AI.
+**Phase 3 preview (off by default):** FarmPool, DemandPool.
 
-## Future roadmap
+## Future roadmap (proposal v3 §18)
 
-**Phase 2 — Analytics expansion:** richer commercial analytics, channel performance, price-response analysis, customer segmentation.
+**Phase 2: Commercial analytics.** Channel performance, buyer behaviour, product performance, repeat demand and margin trends.
 
-**Phase 3 — Predictive intelligence:** a separate Python AI/ML service for demand forecasting, surplus prediction, buyer probability, channel optimisation and pricing recommendations. Node remains the main backend.
+**Phase 3: Network expansion.** Onboard additional farms; introduce FarmPool and DemandPool where validated.
 
-**Phase 4 — Multi-farm network:** FarmPool, DemandPool, cross-farm fulfilment, self-serve farm onboarding, buyer sourcing across farms.
+**Phase 4: Predictive intelligence.** Demand forecasting, surplus prediction, buyer probability and demand-aware crop planning (optional Python service; Node remains the core backend).
 
-**Phase 5 — Farm intelligence:** IoT and environmental sensors, computer vision, yield prediction, digital twins, drones.
+**Phase 5: Farm intelligence.** IoT, computer vision, yield prediction, digital twins or drones as supply-data inputs.
+
+**Long term: exportable AgriTech IP.** Adapt Tyllage software for other high-cost urban-farming ecosystems.
 
 ```
 Predicted Farm Supply  +  Predicted Buyer Demand
                  ↓
-            HarvestMatch
+     MarketRoute → HarvestMatch
                  ↓
    Optimal Commercial Allocation
 ```

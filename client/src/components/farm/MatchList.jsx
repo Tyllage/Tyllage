@@ -4,7 +4,7 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { Badge, EmptyState } from '../ui.jsx';
 import { ScoreRing, StatusBadge } from '../domain.jsx';
 import { Icons } from '../Icons.jsx';
-import { kg, label, money, date } from '../../utils/format.js';
+import { kg, label, money, date, routeLabel, FULFILMENT_TERMS } from '../../utils/format.js';
 import { MarginChip } from './MarginGuardCard.jsx';
 import AiPanel from '../AiPanel.jsx';
 
@@ -68,6 +68,7 @@ function MatchCard({ match, unit, canDecide, selected, onSelect, onDecided }) {
             <div className="row" style={{ gap: 8 }}>
               <h3 style={{ fontSize: 15 }}>{match.buyerName}</h3>
               <Badge>{label(match.buyerType)}</Badge>
+              {match.marketRoute && <Badge tone="primary">{routeLabel(match.marketRoute)}</Badge>}
               {match.source === 'RECOVERY' && <Badge tone="info">Recovery</Badge>}
               {!pending && <StatusBadge status={match.status} />}
             </div>
@@ -91,9 +92,15 @@ function MatchCard({ match, unit, canDecide, selected, onSelect, onDecided }) {
         {match.warnings.map((w) => <li key={w} className="warn">{w}</li>)}
       </ul>
 
-      {/* Decision support from the proposal (does not change the score): margin, urgency, purchase likelihood. */}
+      {/* Decision support (does not change the score): fulfilment terms, Margin Guard before/after fulfilment, urgency. */}
       <div className="chip-row">
+        {match.fulfilment && (
+          <span className="mini-chip" title="Estimated fulfilment cost for this order (farm-private)">
+            {FULFILMENT_TERMS[match.fulfilment.method]} · {money(match.fulfilment.total)}
+          </span>
+        )}
         <MarginChip margin={match.margin} />
+        {match.netMargin && match.fulfilment?.total > 0 && <MarginChip margin={match.netMargin} prefix="Net" />}
         {match.urgency && <span className={`mini-chip ${URGENCY_TONE[match.urgency]}`}>Urgency: {label(match.urgency)}</span>}
         {match.scoreBreakdown?.reliability && <span className="mini-chip">Purchase likelihood {match.scoreBreakdown.reliability.score}%</span>}
         <button className="btn btn-ghost btn-sm" onClick={explain} disabled={aiBusy}><Icons.Sparkle />{aiBusy ? 'Explaining…' : 'Explain with AI'}</button>

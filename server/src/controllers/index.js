@@ -28,6 +28,7 @@ import * as farmPool from '../services/farmPoolService.js';
 import * as demandPool from '../services/demandPoolService.js';
 import * as ai from '../services/aiService.js';
 import * as policies from '../services/policyService.js';
+import * as marketRoute from '../services/marketRouteService.js';
 
 const id = (req) => idParam(req.params.id);
 
@@ -65,7 +66,7 @@ export const harvestController = {
   update: async (req, res) => ok(res, await harvests.updateHarvest(req.user, id(req), req.body, req.ip)),
   markAvailable: async (req, res) => ok(res, await harvests.markAvailable(req.user, id(req), req.ip)),
   close: async (req, res) => ok(res, await harvests.closeHarvest(req.user, id(req), req.ip)),
-  runMatching: async (req, res) => ok(res, await harvestMatch.runMatching(req.user, id(req), { ip: req.ip })),
+  runMatching: async (req, res) => ok(res, await harvestMatch.runMatching(req.user, id(req), { route: req.body?.route || null, ip: req.ip })),
   matches: async (req, res) => ok(res, await harvestMatch.getMatchesForBatch(req.user, id(req))),
 };
 
@@ -168,6 +169,11 @@ export const whatsappController = {
 
 
 // ---------------------------------------------------------------- proposal features
+
+export const marketRouteController = {
+  assess: async (req, res) => ok(res, await marketRoute.getRouteAssessment(req.user, id(req))),
+  select: async (req, res) => ok(res, await marketRoute.selectRoute(req.user, id(req), req.body, req.ip)),
+};
 
 export const extraHarvestController = {
   dispositions: async (req, res) => ok(res, await harvests.listDispositions(req.user, id(req))),

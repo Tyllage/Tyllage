@@ -59,6 +59,12 @@ const LABELS = {
   FARM_PICKUP: 'Farm pickup',
   DELIVERY: 'Delivery',
   COMMUNITY_DROP: 'Community Drop',
+  CENTRAL_DROP: 'Central drop',
+  WET_MARKET: 'Wet market',
+  NO_DEMAND: 'No demand yet',
+  NOT_VIABLE: 'Not viable',
+  PAST_WINDOW: 'Past window',
+  FINAL_DISPOSITION: 'Final disposition',
   PARTIALLY_ALLOCATED: 'Partially allocated',
   FULLY_ALLOCATED: 'Fully allocated',
   AT_RISK: 'At risk',
@@ -73,8 +79,6 @@ const LABELS = {
   FARMPOOL: 'FarmPool',
   DEMANDPOOL: 'DemandPool',
   CHEF_PACK: 'Chef Pack',
-  RESTAURANT_NETWORK: 'Restaurant network',
-  RETAIL_WHOLESALE: 'Retail & wholesale',
   ALTERNATIVE_USE: 'Alternative use',
   NO_SHOW: 'No-show',
   PRE_HARVEST: 'Pre-harvest',
@@ -108,3 +112,27 @@ export function label(v) {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
 }
+
+// ---------------------------------------------------------------- MarketRoute
+
+/** Commercial routes compared by MarketRoute (proposal v3 §8.2), in display order. */
+export const ROUTES = [
+  ['RESTAURANT', 'Restaurants & cafés'],
+  ['INSTITUTIONAL', 'Hotels & caterers'],
+  ['WHOLESALE', 'Wholesale'],
+  ['RETAIL', 'Retail & wet markets'],
+  ['COMMUNITY_D2C', 'Community & D2C'],
+  ['RESCUE', 'Tyllage Rescue'],
+];
+const ROUTE_NAMES = Object.fromEntries(ROUTES);
+export const routeLabel = (key) => ROUTE_NAMES[key] || (key === 'FINAL_DISPOSITION' ? 'Final disposition' : label(key));
+
+/** Fulfilment terms from the farm's side: who moves the produce. */
+export const FULFILMENT_TERMS = {
+  FARM_PICKUP: 'Buyer pickup',
+  CENTRAL_DROP: 'Central drop',
+  COMMUNITY_DROP: 'Collection point',
+  DELIVERY: 'Farm delivery',
+};
+export const RESPONSIBILITY = { BUYER: 'Buyer logistics', SHARED: 'Shared with partner', FARM: 'Farm logistics' };
+export const COLLECTION_METHODS = ['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'];

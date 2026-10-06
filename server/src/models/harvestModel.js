@@ -6,7 +6,7 @@ import { batchMarginGuard } from '../services/marginService.js';
 
 export const BATCH_SELECT = `
   SELECT hb.*, p.name AS produce_name, p.category, p.unit, p.shelf_life_days, p.min_order_quantity,
-         f.name AS farm_name, f.region AS farm_region, f.fulfilment_methods, f.min_margin_pct,
+         f.name AS farm_name, f.region AS farm_region, f.fulfilment_methods, f.min_margin_pct, f.fulfilment_costs,
          bs.harvest_quantity, bs.allocated_quantity, bs.rescue_quantity,
          bs.rescue_sold_quantity, bs.remaining_quantity, bs.disposed_quantity,
          (SELECT COALESCE(SUM(oi.line_total), 0) FROM order_items oi

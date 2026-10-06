@@ -9,7 +9,7 @@ import { Icons } from '../../components/Icons.jsx';
 import { dateTime, label } from '../../utils/format.js';
 
 const REGIONS = ['CENTRAL', 'NORTH', 'NORTH_EAST', 'EAST', 'WEST'];
-const METHODS = ['FARM_PICKUP', 'DELIVERY', 'COMMUNITY_DROP'];
+const METHODS = ['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'];
 const slugify = (s) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 /** Generic modal form: posts `toPayload(form)` to `path`, then calls onDone. */

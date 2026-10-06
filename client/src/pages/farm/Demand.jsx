@@ -14,7 +14,7 @@ const STATUS_FILTERS = [
   { value: 'FULFILLED', label: 'Fulfilled' },
   { value: '', label: 'All' },
 ];
-const BUYER_TYPES = ['RESTAURANT', 'CAFE', 'HOTEL', 'CATERER', 'RETAILER', 'WHOLESALER', 'COMMUNITY', 'CONSUMER'];
+const BUYER_TYPES = ['RESTAURANT', 'CAFE', 'HOTEL', 'CATERER', 'RETAILER', 'WET_MARKET', 'WHOLESALER', 'COMMUNITY', 'CONSUMER'];
 const REGIONS = ['CENTRAL', 'NORTH', 'NORTH_EAST', 'EAST', 'WEST'];
 
 function RecordDemandModal({ farmId, buyers, onClose, onSaved }) {
@@ -103,7 +103,7 @@ function AddBuyerModal({ farmId, onClose, onSaved }) {
           <Field label="Phone"><input className="input" value={form.contactPhone} onChange={set('contactPhone')} /></Field>
           <Field label="Preferred collection" full>
             <select className="input" value={form.preferredCollectionMethod} onChange={set('preferredCollectionMethod')}>
-              {['FARM_PICKUP', 'DELIVERY', 'COMMUNITY_DROP'].map((m) => <option key={m} value={m}>{label(m)}</option>)}
+              {['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'].map((m) => <option key={m} value={m}>{label(m)}</option>)}
             </select>
           </Field>
         </div>

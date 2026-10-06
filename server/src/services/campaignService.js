@@ -8,7 +8,7 @@ import { validate } from '../utils/validate.js';
 import { camelize, camelizeAll } from '../utils/case.js';
 import { notFound, badRequest, conflict } from '../utils/errors.js';
 import { round2 } from '../utils/numbers.js';
-import { BUSINESS_BUYER_TYPES } from '../config/rules.js';
+import { BUSINESS_BUYER_TYPES, DEMAND_ROUTE_KEYS, MARKET_ROUTES } from '../config/rules.js';
 import { findBatchById } from '../models/harvestModel.js';
 import { assertFarmAdmin, assertFarmAccess } from './farmAccessService.js';
 import { generateCampaignCopy, findUnapprovedPrices } from './openaiService.js';
@@ -40,6 +40,8 @@ const generateSchema = z.object({
   harvestBatchId: z.coerce.number().int().positive().optional(),
   rescueListingId: z.coerce.number().int().positive().optional(),
   communityDropId: z.coerce.number().int().positive().optional(),
+  // MarketRoute outreach: address only buyers in one route (batch-based messages).
+  targetRoute: z.enum(DEMAND_ROUTE_KEYS).optional(),
 });
 const updateSchema = z.object({
   title: z.string().trim().min(2).max(200).optional(),
@@ -112,12 +114,13 @@ async function buildContext(farmId, d) {
   const remaining = round2(Math.max(0, b.remaining_quantity));
   if (remaining <= 0) throw conflict('This batch has no unallocated produce to promote', 'NOTHING_AVAILABLE');
   const titles = { B2B_AVAILABILITY: 'B2B availability', DEMAND_RECOVERY: 'Demand recovery', HARVEST_ANNOUNCEMENT: 'Harvest announcement' };
+  const route = d.targetRoute ? { targetRoute: d.targetRoute, targetRouteLabel: MARKET_ROUTES[d.targetRoute].label } : {};
   return {
     context: {
       ...base, produce: b.produce_name, unit: b.unit, quantity: remaining, harvestDate: b.harvest_date,
-      price: b.preferred_price, grade: b.grade,
+      price: b.preferred_price, grade: b.grade, ...route,
     },
-    title: `${titles[d.campaignType]}: ${b.produce_name}`,
+    title: `${titles[d.campaignType]}: ${b.produce_name}${route.targetRouteLabel ? ` → ${route.targetRouteLabel}` : ''}`,
     refs: { harvestBatchId: b.id },
   };
 }
@@ -137,7 +140,7 @@ export async function generateCampaign(user, farmId, input, ip) {
       refs.harvestBatchId ?? null, refs.rescueListingId ?? null, refs.communityDropId ?? null, user.id]
   );
   await logAudit({ farmId, userId: user.id, action: 'CAMPAIGN_GENERATED', entityType: 'campaign', entityId: rows[0].id, details: { type: d.campaignType, mode: ai.mode }, ip });
-  const recipients = await resolveRecipients(farmId, audience);
+  const recipients = await resolveRecipients(farmId, audience, context.targetRoute);
   return { ...camelize(rows[0]), warnings: ai.warnings, recipientsPreview: recipients.length };
 }
 
@@ -162,7 +165,7 @@ export async function listCampaigns(farmId) {
 export async function getCampaign(user, id) {
   const c = await loadCampaign(id);
   assertFarmAccess(user, c.farm_id);
-  const recipients = await resolveRecipients(c.farm_id, c.audience);
+  const recipients = await resolveRecipients(c.farm_id, c.audience, c.context?.targetRoute);
   // Re-check on every read so edits that introduce an unapproved price are flagged too.
   const unapproved = findUnapprovedPrices(c.final_content, c.context);
   const warnings = unapproved.length
@@ -203,15 +206,18 @@ export async function cancelCampaign(user, id, ip) {
 
 /**
  * Backend-only recipient selection: active, WhatsApp-opted-in buyers with a phone number,
- * filtered by audience and limited to buyers with a relationship to this farm.
+ * filtered by audience (or by MarketRoute route, which takes precedence) and limited to buyers
+ * with a relationship to this farm.
  */
-export async function resolveRecipients(farmId, audience) {
-  const typeFilter = {
-    ALL_BUYERS: null,
-    BUSINESS_BUYERS: BUSINESS_BUYER_TYPES,
-    CONSUMERS: ['CONSUMER'],
-    COMMUNITY: ['COMMUNITY', 'CONSUMER'],
-  }[audience];
+export async function resolveRecipients(farmId, audience, targetRoute) {
+  const typeFilter = targetRoute && MARKET_ROUTES[targetRoute]
+    ? MARKET_ROUTES[targetRoute].buyerTypes
+    : {
+      ALL_BUYERS: null,
+      BUSINESS_BUYERS: BUSINESS_BUYER_TYPES,
+      CONSUMERS: ['CONSUMER'],
+      COMMUNITY: ['COMMUNITY', 'CONSUMER'],
+    }[audience];
   const { rows } = await query(
     `SELECT bp.id, bp.organisation_name, bp.contact_phone, bp.user_id FROM buyer_profiles bp
       WHERE bp.is_active AND bp.whatsapp_opt_in AND bp.contact_phone IS NOT NULL
@@ -234,7 +240,7 @@ export async function sendCampaign(user, id, ip) {
   const claim = await query(`UPDATE campaigns SET status = 'SENT', sent_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'APPROVED'`, [id]);
   if (!claim.rowCount) throw conflict('Campaign is already being sent', 'CAMPAIGN_NOT_APPROVED');
 
-  const recipients = await resolveRecipients(c.farm_id, c.audience);
+  const recipients = await resolveRecipients(c.farm_id, c.audience, c.context?.targetRoute);
   const results = [];
   for (const r of recipients) {
     try {

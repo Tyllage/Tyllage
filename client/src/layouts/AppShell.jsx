@@ -6,16 +6,18 @@ import { Icons, Logo } from '../components/Icons.jsx';
 import { api } from '../services/api.js';
 import { dateTime, label } from '../utils/format.js';
 
+// Follows the proposal v3 workflow: harvest → demand → route → match → orders → recovery → learn.
 const FARM_NAV = [
-  { to: '/farm/overview', label: 'Overview', icon: Icons.Overview },
+  { to: '/farm/overview', label: 'Demand Radar', icon: Icons.Overview },
   { to: '/farm/harvests', label: 'Harvests', icon: Icons.Harvest },
   { to: '/farm/demand', label: 'Demand', icon: Icons.Demand },
+  { to: '/farm/marketroute', label: 'MarketRoute', icon: Icons.Route },
   { to: '/farm/harvestmatch', label: 'HarvestMatch', icon: Icons.Match, admin: true },
   { to: '/farm/orders', label: 'Orders', icon: Icons.Orders },
   { to: '/farm/recovery', label: 'Recovery', icon: Icons.Recovery, admin: true },
   { to: '/farm/rescue', label: 'Rescue', icon: Icons.Rescue },
-  { to: '/farm/campaigns', label: 'Campaigns', icon: Icons.Campaign, admin: true },
-  { to: '/farm/analytics', label: 'Analytics', icon: Icons.Analytics, admin: true },
+  { to: '/farm/campaigns', label: 'Connect', icon: Icons.Campaign, admin: true },
+  { to: '/farm/analytics', label: 'Insights', icon: Icons.Analytics, admin: true },
   { to: '/farm/settings', label: 'Settings', icon: Icons.Settings },
 ];
 const NETWORK_NAV = [
@@ -99,7 +101,7 @@ function Notifications() {
 
 export default function AppShell() {
   const { user, logout, isFarmSide, isFarmAdmin, isPlatformAdmin } = useAuth();
-  const { farms, farm, farmId, setActiveFarmId } = useFarm();
+  const { farms, farm, farmId, setActiveFarmId, features } = useFarm();
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -125,9 +127,9 @@ export default function AppShell() {
             <>
               <div className="nav-section">Farm</div>
               <NavItems items={FARM_NAV.filter((i) => !i.admin || isFarmAdmin)} />
-              {isFarmAdmin && (
+              {isFarmAdmin && features.networkFeaturesEnabled && (
                 <>
-                  <div className="nav-section">Network</div>
+                  <div className="nav-section">Network · Phase 3 preview</div>
                   <NavItems items={NETWORK_NAV} />
                 </>
               )}

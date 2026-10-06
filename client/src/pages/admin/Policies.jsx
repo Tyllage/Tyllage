@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../../services/api.js';
 import { useApi } from '../../hooks/useApi.js';
 import { useToast } from '../../context/ToastContext.jsx';
+import { useFarm } from '../../context/FarmContext.jsx';
 import { PageHeader, Card, AsyncBoundary, Badge, Field, Notice } from '../../components/ui.jsx';
 import { dateTime, label } from '../../utils/format.js';
 
@@ -28,8 +29,20 @@ const OBJECTS = {
     fields: [['produce', 'Produce fit'], ['date', 'Harvest date'], ['price', 'Price'], ['quantity', 'Quantity'], ['reliability', 'Buyer reliability'], ['location', 'Location']],
     total: 100,
   },
+  routeWeights: {
+    label: 'Commercial Route Score weights',
+    help: 'How much each factor contributes to a 0–100 MarketRoute score. Weights must add up to exactly 100.',
+    fields: [['demandFit', 'Demand fit'], ['price', 'Price'], ['margin', 'Margin after fulfilment'], ['volume', 'Order volume'], ['fulfilment', 'Logistics'], ['reliability', 'Buyer reliability'], ['urgency', 'Urgency vs shelf life']],
+    total: 100,
+  },
 };
-const ROUTING = { label: 'Routing stages', help: 'Each stage applies until the given % of shelf life has elapsed since harvest. Limits must increase; the last stage is open-ended.' };
+const BOOLEANS = {
+  networkFeaturesEnabled: {
+    label: 'Enable FarmPool & DemandPool preview',
+    help: 'Post-MVP network features (proposal Phase 3). Off for the ComCrop MVP; turn on to demonstrate cross-farm fulfilment and buyer aggregation.',
+  },
+};
+const ROUTING = { label: 'Shelf-life stages', help: 'Each stage applies until the given % of shelf life has elapsed since harvest. Limits must increase; the last stage is open-ended.' };
 
 const GROUPS = [
   {
@@ -43,19 +56,24 @@ const GROUPS = [
     keys: ['matchWeights', 'freshnessWindowDays', 'strongMatchThreshold', 'neutralReliabilityScore'],
   },
   {
+    title: 'MarketRoute weights',
+    description: 'MarketRoute compares commercial routes for each batch with these transparent, weighted factors before HarvestMatch ranks buyers.',
+    keys: ['routeWeights'],
+  },
+  {
     title: 'Rescue guard-rails',
     description: 'Limits farms must respect when listing surplus or imperfect produce in the Rescue market.',
     keys: ['rescueMaxDeadlineDays', 'rescueMaxDiscountPct'],
   },
   {
-    title: 'Dynamic Perishable Inventory Routing',
-    description: 'Moves unsold stock through sales channels as shelf life elapses, from premium sale to donation.',
+    title: 'Shelf-life window',
+    description: 'How urgency rises as produce ages, from premium sale to final disposition. Feeds MarketRoute urgency and the Rescue price rule.',
     keys: ['defaultShelfLifeDays', 'routingStages'],
   },
   {
-    title: 'DemandPool',
-    description: 'Combines small requests from several buyers into one order a farm can viably fulfil.',
-    keys: ['demandPoolMinViableKg'],
+    title: 'Phase 3 network preview',
+    description: 'FarmPool (several farms fill one large request) and DemandPool (small requests combined into one viable order) are Post-MVP.',
+    keys: ['networkFeaturesEnabled', 'demandPoolMinViableKg'],
   },
 ];
 
@@ -64,6 +82,7 @@ const sumOf = (obj) => Object.values(obj).reduce((s, n) => s + (Number.isFinite(
 const toDraft = (value) => JSON.parse(JSON.stringify(value), (_, v) => (typeof v === 'number' ? String(v) : v));
 
 function fromDraft(key, d) {
+  if (typeof d === 'boolean') return d;
   if (key === 'routingStages') return d.map((s, i) => ({ key: s.key, label: s.label.trim(), upToPct: i === d.length - 1 ? null : toNum(s.upToPct) }));
   if (typeof d === 'object') return Object.fromEntries(Object.entries(d).map(([k, v]) => [k, toNum(v)]));
   return toNum(d);
@@ -71,11 +90,12 @@ function fromDraft(key, d) {
 
 /** Client-side checks mirroring the server rules; the server validates again on save. */
 function checkPolicy(key, v) {
+  if (typeof v === 'boolean') return null;
   const nums = key === 'routingStages' ? v.slice(0, -1).map((s) => s.upToPct) : typeof v === 'object' ? Object.values(v) : [v];
   if (nums.some((n) => !Number.isFinite(n))) return 'Enter a number in every field.';
   if (nums.some((n) => n < 0)) return 'Values cannot be negative.';
   if (key === 'riskThresholds' && !(v.LOW > v.MEDIUM)) return 'The low-risk threshold must be above the medium-risk threshold.';
-  if (key === 'matchWeights') {
+  if (key === 'matchWeights' || key === 'routeWeights') {
     const sum = nums.reduce((s, n) => s + n, 0);
     if (sum !== 100) return `Weights add up to ${sum} — they must total 100.`;
   }
@@ -102,6 +122,7 @@ function PolicyMeta({ policy, busy, onReset }) {
 
 function PolicyGroup({ group, policies, onSaved }) {
   const toast = useToast();
+  const { refreshFeatures } = useFarm();
   const initial = (list) => Object.fromEntries(group.keys.map((k) => [k, toDraft(list[k].value)]));
   const [drafts, setDrafts] = useState(() => initial(policies));
   const [busy, setBusy] = useState(false);
@@ -118,6 +139,7 @@ function PolicyGroup({ group, policies, onSaved }) {
       const byKey = Object.fromEntries(list.map((p) => [p.key, p]));
       onSaved(list);
       setDrafts(initial(byKey));
+      refreshFeatures();
       toast(success);
     } catch (err) {
       toast(err.message, 'error');
@@ -135,7 +157,7 @@ function PolicyGroup({ group, policies, onSaved }) {
   const renderPolicy = (k) => {
     const policy = policies[k];
     const err = errors[k];
-    const meta = SCALARS[k] || OBJECTS[k] || ROUTING;
+    const meta = SCALARS[k] || OBJECTS[k] || BOOLEANS[k] || ROUTING;
     return (
       <div key={k} className="stack" style={{ gap: 10 }}>
         <div className="row-between">
@@ -145,6 +167,12 @@ function PolicyGroup({ group, policies, onSaved }) {
           </div>
           <PolicyMeta policy={policy} busy={busy} onReset={() => reset(k)} />
         </div>
+        {BOOLEANS[k] && (
+          <label className="checkbox">
+            <input type="checkbox" checked={drafts[k]} onChange={(e) => setDrafts((d) => ({ ...d, [k]: e.target.checked }))} />
+            {drafts[k] ? 'Enabled' : 'Disabled'} <span className="small muted">(default {policy.defaultValue ? 'enabled' : 'disabled'})</span>
+          </label>
+        )}
         {SCALARS[k] && (
           <div className="form-grid">
             <Field label={`Value (${meta.unit})`} error={err} hint={`Default ${policy.defaultValue} ${meta.unit}`}>
@@ -254,7 +282,7 @@ export default function Policies() {
     <>
       <PageHeader
         title="Platform policies"
-        description="The transparent business rules behind risk, HarvestMatch, Rescue, routing and DemandPool. Changes apply platform-wide immediately and are recorded in the audit log."
+        description="The transparent business rules behind risk, MarketRoute, HarvestMatch, Rescue, shelf-life urgency and the Phase 3 preview. Changes apply platform-wide immediately and are recorded in the audit log."
       />
       <div className="grid grid-main-side">
         <AsyncBoundary state={state}>

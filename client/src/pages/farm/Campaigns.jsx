@@ -7,7 +7,7 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { AsyncBoundary, Badge, Card, EmptyState, Field, Modal, Notice, PageHeader, Tabs } from '../../components/ui.jsx';
 import { StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
-import { dateTime, kg, label } from '../../utils/format.js';
+import { dateTime, kg, label, routeLabel, ROUTES } from '../../utils/format.js';
 import AiPanel from '../../components/AiPanel.jsx';
 
 const TYPES = ['RESCUE_ALERT', 'B2B_AVAILABILITY', 'HARVEST_ANNOUNCEMENT', 'DEMAND_RECOVERY', 'COMMUNITY_DROP', 'CUSTOMER_RECOMMENDATION'];
@@ -19,6 +19,7 @@ function GenerateModal({ farmId, onClose, onCreated }) {
   const [type, setType] = useState('B2B_AVAILABILITY');
   const [ref, setRef] = useState('');
   const [audience, setAudience] = useState('');
+  const [targetRoute, setTargetRoute] = useState('');
   const [busy, setBusy] = useState(false);
   const need = type in NEEDS ? NEEDS[type] : 'batch';
   const batches = useApi(() => api.get('/harvests', { farmId }), [farmId]);
@@ -36,7 +37,10 @@ function GenerateModal({ farmId, onClose, onCreated }) {
     e.preventDefault();
     setBusy(true);
     const body = { farmId, campaignType: type, audience: audience || undefined };
-    if (need === 'batch') body.harvestBatchId = Number(ref);
+    if (need === 'batch') {
+      body.harvestBatchId = Number(ref);
+      if (targetRoute) body.targetRoute = targetRoute;
+    }
     if (need === 'rescue') body.rescueListingId = Number(ref);
     if (need === 'drop') body.communityDropId = Number(ref);
     try {
@@ -68,8 +72,16 @@ function GenerateModal({ farmId, onClose, onCreated }) {
             </select>
           </Field>
         )}
+        {need === 'batch' && (
+          <Field label="Target route (MarketRoute)" hint="Address only buyers in one route. Overrides the audience below.">
+            <select className="input" value={targetRoute} onChange={(e) => setTargetRoute(e.target.value)}>
+              <option value="">Any route</option>
+              {ROUTES.filter(([k]) => k !== 'RESCUE').map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Audience" hint="Default depends on the campaign type. Recipients are always filtered by the server (opted-in buyers only).">
-          <select className="input" value={audience} onChange={(e) => setAudience(e.target.value)}>
+          <select className="input" value={audience} onChange={(e) => setAudience(e.target.value)} disabled={need === 'batch' && Boolean(targetRoute)}>
             <option value="">Default for this type</option>
             {AUDIENCES.map((a) => <option key={a} value={a}>{label(a)}</option>)}
           </select>
@@ -188,9 +200,9 @@ export default function Campaigns() {
   return (
     <>
       <PageHeader
-        title="Campaigns"
-        description="Tyllage Connect drafts outreach from approved farm data. You review, edit and approve before anything is sent."
-        actions={<button className="btn btn-primary" onClick={() => setGenerating(true)}><Icons.Sparkle />Generate campaign</button>}
+        title="Tyllage Connect"
+        description="Approved outreach to business buyers, existing customers and community audiences. AI drafts copy from your farm's records; the backend controls stock, prices and recipients, and nothing is sent until you approve."
+        actions={<button className="btn btn-primary" onClick={() => setGenerating(true)}><Icons.Sparkle />Generate outreach</button>}
       />
       {health.data && (
         <div className="row small muted" style={{ marginBottom: 12 }}>
@@ -198,7 +210,7 @@ export default function Campaigns() {
           <span>· WhatsApp: <b>{health.data.integrations.whatsapp === 'configured' ? 'Cloud API' : 'mock mode — messages are logged, not delivered'}</b></span>
         </div>
       )}
-      <Tabs tabs={[{ value: 'campaigns', label: 'Campaigns' }, { value: 'log', label: 'WhatsApp message log' }]} value={tab} onChange={setTab} />
+      <Tabs tabs={[{ value: 'campaigns', label: 'Outreach' }, { value: 'log', label: 'WhatsApp message log' }]} value={tab} onChange={setTab} />
       {tab === 'campaigns' && (
         <Card tight>
           <AsyncBoundary state={campaigns}>
@@ -206,13 +218,13 @@ export default function Campaigns() {
               rows.length === 0 ? <EmptyState title="No campaigns yet" action={<button className="btn btn-primary" onClick={() => setGenerating(true)}>Generate the first one</button>} /> : (
                 <div className="table-wrap">
                   <table className="table">
-                    <thead><tr><th>Campaign</th><th>Type</th><th>Audience</th><th>Mode</th><th>Status</th><th>Updated</th><th /></tr></thead>
+                    <thead><tr><th>Campaign</th><th>Type</th><th>Audience / route</th><th>Mode</th><th>Status</th><th>Updated</th><th /></tr></thead>
                     <tbody>
                       {rows.map((c) => (
                         <tr key={c.id} className="clickable" onClick={() => open(c.id)}>
                           <td className="cell-title">{c.title}<div className="cell-sub" style={{ maxWidth: 420, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.finalContent}</div></td>
                           <td>{label(c.campaignType)}</td>
-                          <td>{label(c.audience)}</td>
+                          <td>{c.context?.targetRoute ? routeLabel(c.context.targetRoute) : label(c.audience)}</td>
                           <td>{label(c.generationMode)}</td>
                           <td><StatusBadge status={c.status} /></td>
                           <td className="nowrap">{dateTime(c.updatedAt)}</td>

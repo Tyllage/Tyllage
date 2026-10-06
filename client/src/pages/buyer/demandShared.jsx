@@ -10,7 +10,7 @@ import { kg, money, date, relativeDay, todayISO, addDaysISO, label } from '../..
 
 export const RECURRENCE = ['NONE', 'WEEKLY', 'BIWEEKLY', 'MONTHLY'];
 export const OPEN_DEMAND = ['OPEN', 'PARTIALLY_FULFILLED'];
-export const COLLECTION_METHODS = ['FARM_PICKUP', 'DELIVERY', 'COMMUNITY_DROP'];
+export const COLLECTION_METHODS = ['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'];
 export const CONSUMER_COLLECTION = ['FARM_PICKUP', 'COMMUNITY_DROP'];
 
 const laterOf = (a, b) => (a && a > b ? a : b);

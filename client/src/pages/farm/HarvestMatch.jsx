@@ -7,7 +7,7 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { AsyncBoundary, Card, EmptyState, PageHeader } from '../../components/ui.jsx';
 import { CoverageBar, RiskBadge, StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
-import { date, dateTime, kg, label, money } from '../../utils/format.js';
+import { date, dateTime, kg, label, money, routeLabel } from '../../utils/format.js';
 
 const FACTORS = [
   ['Produce / demand match', 30, 'Exact produce = 100, close name (e.g. Baby Kale ≈ Kale) = 75, otherwise excluded'],
@@ -30,7 +30,7 @@ export default function HarvestMatch() {
     setRunning(b.id);
     try {
       await api.post(`/harvests/${b.id}/run-matching`);
-      navigate(`/farm/harvests/${b.id}`);
+      navigate(`/farm/harvests/${b.id}#harvestmatch`);
     } catch (err) {
       toast(err.message, 'error');
       setRunning(null);
@@ -41,7 +41,7 @@ export default function HarvestMatch() {
     <>
       <PageHeader
         title="HarvestMatch"
-        description="Match expected harvest with existing demand before produce becomes commercially at risk. Every recommendation is explainable and nothing is allocated without your approval."
+        description="Once a route is chosen in MarketRoute, HarvestMatch ranks the specific buyers within it. You can also rank across all routes. Every recommendation is explainable and nothing is allocated without your approval."
       />
       <div className="grid grid-main-side">
         <Card tight title="Batches to match" description="Open batches with unallocated produce, lowest coverage first.">
@@ -62,9 +62,10 @@ export default function HarvestMatch() {
                           <td className="num strong">{kg(b.unallocatedQuantity, b.unit)}</td>
                           <td><RiskBadge level={b.riskLevel} /></td>
                           <td><StatusBadge status={b.status} /></td>
-                          <td>
-                            <button className="btn btn-sm btn-primary" onClick={() => run(b)} disabled={running === b.id}>
-                              <Icons.Match />{running === b.id ? 'Matching…' : 'Run'}
+                          <td className="nowrap">
+                            <Link className="btn btn-sm" to={`/farm/harvests/${b.id}#routes`}><Icons.Route />Routes</Link>{' '}
+                            <button className="btn btn-sm btn-primary" onClick={() => run(b)} disabled={running === b.id} title="Rank buyers across all routes">
+                              <Icons.Match />{running === b.id ? 'Matching…' : 'All routes'}
                             </button>
                           </td>
                         </tr>
@@ -93,13 +94,14 @@ export default function HarvestMatch() {
             rows.length === 0 ? <EmptyState title="No decisions yet">Approved and rejected matches will appear here.</EmptyState> : (
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Decided</th><th>Produce</th><th>Buyer</th><th className="num">Score</th><th className="num">Quantity</th><th className="num">Unit price</th><th>Source</th><th>Decision</th><th>Order</th></tr></thead>
+                  <thead><tr><th>Decided</th><th>Produce</th><th>Buyer</th><th>Route</th><th className="num">Score</th><th className="num">Quantity</th><th className="num">Unit price</th><th>Source</th><th>Decision</th><th>Order</th></tr></thead>
                   <tbody>
                     {rows.map((m) => (
                       <tr key={m.id}>
                         <td className="nowrap">{dateTime(m.decidedAt)}</td>
                         <td>{m.produceName}</td>
                         <td>{m.buyerName}<div className="cell-sub">{label(m.buyerType)}</div></td>
+                        <td>{m.marketRoute ? routeLabel(m.marketRoute) : '—'}</td>
                         <td className="num">{m.matchScore}%</td>
                         <td className="num">{kg(m.approvedQuantity ?? m.recommendedQuantity)}</td>
                         <td className="num">{money(m.unitPrice)}</td>

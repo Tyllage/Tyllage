@@ -117,7 +117,7 @@ export async function listMatchesForFarm(farmId, { status } = {}) {
   }
   const { rows } = await query(
     `SELECT hm.id, hm.harvest_batch_id, hm.demand_request_id, hm.source, hm.match_score, hm.recommended_quantity,
-            hm.approved_quantity, hm.unit_price, hm.expected_revenue, hm.status, hm.order_id, hm.decided_at, hm.created_at,
+            hm.approved_quantity, hm.unit_price, hm.expected_revenue, hm.status, hm.order_id, hm.decided_at, hm.created_at, hm.market_route,
             bp.organisation_name AS buyer_name, bp.buyer_type, p.name AS produce_name, hb.harvest_date
        FROM harvest_matches hm
        JOIN buyer_profiles bp ON bp.id = hm.buyer_id

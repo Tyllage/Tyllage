@@ -20,12 +20,16 @@ export function FarmProvider({ children }) {
     }
   });
   const [loading, setLoading] = useState(false);
+  // Platform feature flags (e.g. the Phase 3 FarmPool / DemandPool preview).
+  const [features, setFeatures] = useState({ networkFeaturesEnabled: false });
+  const refreshFeatures = () => api.get('/features').then(setFeatures).catch(() => {});
 
   useEffect(() => {
     if (!user || !isFarmSide) {
       setFarms([]);
       return;
     }
+    refreshFeatures();
     setLoading(true);
     api
       .get('/farms')
@@ -53,8 +57,10 @@ export function FarmProvider({ children }) {
       setActiveFarmId,
       loading,
       refreshFarms: () => api.get('/farms').then(setFarms),
+      features,
+      refreshFeatures,
     }),
-    [farms, activeFarmId, loading]
+    [farms, activeFarmId, loading, features]
   );
 
   return <FarmContext.Provider value={value}>{children}</FarmContext.Provider>;

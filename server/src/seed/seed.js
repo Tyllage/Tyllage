@@ -16,6 +16,7 @@ import { addDays, todayISO } from '../utils/dates.js';
 import { round2 } from '../utils/numbers.js';
 import { syncBatchStatus } from '../models/harvestModel.js';
 import { runMigrations } from '../db/migrate.js';
+import { estimateFulfilment } from '../services/fulfilmentService.js';
 
 export const DEMO_PASSWORD = 'TyllageDemo2026!';
 
@@ -38,12 +39,13 @@ const BUYERS = {
   catererE: { name: 'Caterer E (Demo)', type: 'CATERER', region: 'WEST', method: 'DELIVERY', phone: '80000005', optIn: false, managed: true },
   retailerF: { name: 'Retailer F (Demo)', type: 'RETAILER', region: 'NORTH', method: 'FARM_PICKUP', phone: '80000006', optIn: true, managed: true },
   consumerG: { name: 'Consumer G (Demo)', type: 'CONSUMER', region: 'EAST', method: 'FARM_PICKUP', phone: '80000007', optIn: true, managed: true },
-  wholesalerH: { name: 'Wholesaler H (Demo)', type: 'WHOLESALER', region: 'WEST', method: 'FARM_PICKUP', phone: '80000008', optIn: false, managed: true },
+  wholesalerH: { name: 'Wholesaler H (Demo)', type: 'WHOLESALER', region: 'WEST', method: 'CENTRAL_DROP', phone: '80000008', optIn: false, managed: true },
+  wetMarketJ: { name: 'Wet Market Stall J (Demo)', type: 'WET_MARKET', region: 'NORTH', method: 'FARM_PICKUP', phone: '80000010', optIn: true, managed: true },
   consumer: { name: 'Demo Consumer', type: 'CONSUMER', region: 'NORTH', method: 'COMMUNITY_DROP', phone: '80000009', optIn: true },
 };
 
 const TABLES = [
-  'pilot_baselines', 'platform_policies', 'order_disputes', 'demand_pool_members', 'demand_pools', 'batch_dispositions',
+  'route_selections', 'pilot_baselines', 'platform_policies', 'order_disputes', 'demand_pool_members', 'demand_pools', 'batch_dispositions',
   'audit_logs', 'notifications', 'campaigns', 'allocations', 'harvest_matches', 'match_runs', 'order_items', 'orders',
   'rescue_listings', 'community_drops', 'demand_requests', 'buyer_profiles', 'harvest_batches', 'produce', 'farm_staff', 'farms', 'users',
 ];
@@ -58,10 +60,11 @@ async function insert(client, table, data) {
 }
 
 /** Inserts order + item + allocation consistently (seed bypasses API but keeps stock rules). */
-async function seedOrder(client, { farmId, buyerId, batch, quantity, unitPrice, status, source = 'HARVESTMATCH', createdAt, demandId = null, cancelledBy = null, collection = 'FARM_PICKUP', dropId = null, userId }) {
+async function seedOrder(client, { farmId, buyerId, batch, quantity, unitPrice, status, source = 'HARVESTMATCH', createdAt, demandId = null, cancelledBy = null, collection = 'FARM_PICKUP', dropId = null, userId, farmCosts = {} }) {
   const total = round2(quantity * unitPrice);
   const order = await insert(client, 'orders', {
     farm_id: farmId, buyer_id: buyerId, status, source, collection_method: collection, community_drop_id: dropId,
+    fulfilment_cost: estimateFulfilment(collection, quantity, farmCosts).total,
     scheduled_date: batch.harvest_date, total_amount: total, created_by: userId, created_at: createdAt, updated_at: createdAt,
     completed_at: status === 'COMPLETED' ? createdAt : null,
     cancelled_at: status === 'CANCELLED' ? createdAt : null,
@@ -94,7 +97,14 @@ export async function seed({ log = console.log } = {}) {
       region: 'NORTH',
       address: 'Demo address (not a real location)',
       contact_email: 'farm@comcrop.demo',
-      fulfilment_methods: ['FARM_PICKUP', 'DELIVERY', 'COMMUNITY_DROP'],
+      fulfilment_methods: ['FARM_PICKUP', 'CENTRAL_DROP', 'COMMUNITY_DROP', 'DELIVERY'],
+      // DEMO ASSUMPTIONS for fulfilment cost estimates (S$), not ComCrop figures.
+      fulfilment_costs: JSON.stringify({
+        FARM_PICKUP: { perOrder: 0, perKg: 0 },
+        CENTRAL_DROP: { perOrder: 8, perKg: 0.3 },
+        COMMUNITY_DROP: { perOrder: 3, perKg: 0.2 },
+        DELIVERY: { perOrder: 15, perKg: 0.2 },
+      }),
       is_demo: true,
     });
     const farmB = await insert(client, 'farms', {
@@ -107,6 +117,8 @@ export async function seed({ log = console.log } = {}) {
       is_demo: true,
     });
     const farms = { comcrop, farmB };
+    const costs = comcrop.fulfilment_costs; // jsonb comes back parsed
+    const methodFor = (key) => (comcrop.fulfilment_methods.includes(BUYERS[key].method) ? BUYERS[key].method : 'FARM_PICKUP');
 
     // ---------------------------------------------------------------- users
     const users = {};
@@ -168,7 +180,7 @@ export async function seed({ log = console.log } = {}) {
       [hNaiBai, 'retailerF', 25, 7, 'COMPLETED'], [hNaiBai, 'wholesalerH', 15, 6.5, 'COMPLETED'], [hNaiBai, 'hotelB', 6, 8, 'COMPLETED'], [hNaiBai, 'restaurantA', 5, 8, 'COMPLETED'],
     ];
     for (const [b, key, qty, price, status, cancelledBy] of hist) {
-      await seedOrder(client, { farmId: comcrop.id, buyerId: buyers[key].id, batch: b, quantity: qty, unitPrice: price, status, cancelledBy, createdAt: ts(addDays(b.harvest_date, -2)), userId: farmAdminId });
+      await seedOrder(client, { farmId: comcrop.id, buyerId: buyers[key].id, batch: b, quantity: qty, unitPrice: price, status, cancelledBy, createdAt: ts(addDays(b.harvest_date, -2)), userId: farmAdminId, collection: methodFor(key), farmCosts: costs });
     }
 
     // ---------------------------------------------------------------- current batches
@@ -196,11 +208,11 @@ export async function seed({ log = console.log } = {}) {
     ];
     const basilOrders = [];
     for (const [b, key, qty, price] of current) {
-      const o = await seedOrder(client, { farmId: comcrop.id, buyerId: buyers[key].id, batch: b, quantity: qty, unitPrice: price, status: 'CONFIRMED', createdAt: recent, userId: farmAdminId });
+      const o = await seedOrder(client, { farmId: comcrop.id, buyerId: buyers[key].id, batch: b, quantity: qty, unitPrice: price, status: 'CONFIRMED', createdAt: recent, userId: farmAdminId, collection: methodFor(key), farmCosts: costs });
       if (b === basil) basilOrders.push({ o, key, qty, price });
     }
     // A buyer-cancelled Kale order (Wholesaler H) — Demand Recovery excludes this buyer for the batch.
-    await seedOrder(client, { farmId: comcrop.id, buyerId: buyers.wholesalerH.id, batch: kale, quantity: 12, unitPrice: 12, status: 'CANCELLED', cancelledBy: 'BUYER', createdAt: ts(addDays(T, -1), 15), userId: farmAdminId });
+    await seedOrder(client, { farmId: comcrop.id, buyerId: buyers.wholesalerH.id, batch: kale, quantity: 12, unitPrice: 12, status: 'CANCELLED', cancelledBy: 'BUYER', createdAt: ts(addDays(T, -1), 15), userId: farmAdminId, collection: methodFor('wholesalerH'), farmCosts: costs });
 
     // Community Drop with the demo consumer's lettuce order.
     const drop = await insert(client, 'community_drops', {
@@ -208,7 +220,7 @@ export async function seed({ log = console.log } = {}) {
       region: 'NORTH', drop_date: addDays(T, 7), window_start: '10:00', window_end: '11:30', created_by: farmAdminId,
       notes: 'DEMO / PILOT DATA',
     });
-    await seedOrder(client, { farmId: comcrop.id, buyerId: buyers.consumer.id, batch: lettuce, quantity: 2, unitPrice: 10, status: 'CONFIRMED', source: 'DIRECT', collection: 'COMMUNITY_DROP', dropId: drop.id, createdAt: recent, userId: farmAdminId });
+    await seedOrder(client, { farmId: comcrop.id, buyerId: buyers.consumer.id, batch: lettuce, quantity: 2, unitPrice: 10, status: 'CONFIRMED', source: 'DIRECT', collection: 'COMMUNITY_DROP', dropId: drop.id, createdAt: recent, userId: farmAdminId, farmCosts: costs });
 
     // ---------------------------------------------------------------- open demand
     const demand = (key, d) =>
@@ -226,6 +238,8 @@ export async function seed({ log = console.log } = {}) {
     await demand('catererE', { farm_id: comcrop.id, produce_id: P['Nai Bai'].id, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 10, required_date: addDays(T, 4), max_price: 7 });
     await demand('hotelB', { farm_id: comcrop.id, produce_id: P.Lettuce.id, produce_name: 'Lettuce', category: 'LEAFY_GREENS', quantity: 8, required_date: addDays(T, 7), max_price: 10, recurrence: 'WEEKLY' });
     await demand('consumer', { farm_id: null, produce_name: 'Mint', category: 'HERBS', quantity: 0.5, required_date: addDays(T, 6) });
+    // Retail route: a wet-market stall's weekly Lettuce requirement.
+    await demand('wetMarketJ', { farm_id: comcrop.id, produce_id: P.Lettuce.id, produce_name: 'Lettuce', category: 'LEAFY_GREENS', quantity: 10, required_date: addDays(T, 8), max_price: 8.5, recurrence: 'WEEKLY' });
 
     // DemandPool: small Nai Bai requests, each below the 5kg farm minimum order, viable together (6kg).
     await demand('consumerG', { farm_id: null, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 2, required_date: addDays(T, 4) });
@@ -258,7 +272,12 @@ export async function seed({ log = console.log } = {}) {
       description: 'Demo: delivery was about 0.5kg short of the ordered quantity.',
     });
 
-    // ---------------------------------------------------------------- HarvestMatch history on Sweet Basil
+    // ---------------------------------------------------------------- MarketRoute + HarvestMatch history on Sweet Basil
+    await client.query('UPDATE harvest_batches SET primary_route = $1 WHERE id = $2', ['RESTAURANT', basil.id]);
+    await insert(client, 'route_selections', {
+      farm_id: comcrop.id, harvest_batch_id: basil.id, route: 'RESTAURANT', recommended_route: 'RESTAURANT', route_score: 88, stage: 'PRIMARY',
+      remaining_quantity: 30, assessment: JSON.stringify({ note: 'DEMO / PILOT DATA' }), created_by: farmAdminId, created_at: ts(addDays(T, -3), 8),
+    });
     const run = await insert(client, 'match_runs', {
       farm_id: comcrop.id, harvest_batch_id: basil.id, run_type: 'HARVESTMATCH', remaining_quantity: 30, candidates_count: 4,
       summary: JSON.stringify({ note: 'DEMO / PILOT DATA' }), created_by: farmAdminId, created_at: ts(addDays(T, -3), 8),
@@ -271,7 +290,7 @@ export async function seed({ log = console.log } = {}) {
       await client.query('UPDATE order_items SET demand_request_id = $1 WHERE order_id = $2', [dr.id, o.id]);
       await insert(client, 'harvest_matches', {
         farm_id: comcrop.id, run_id: run.id, harvest_batch_id: basil.id, demand_request_id: dr.id, buyer_id: buyers[key].id,
-        match_score: key === 'restaurantA' ? 94 : key === 'cafeD' ? 90 : 81,
+        match_score: key === 'restaurantA' ? 94 : key === 'cafeD' ? 90 : 81, market_route: key === 'hotelB' ? 'INSTITUTIONAL' : 'RESTAURANT',
         reasons: JSON.stringify(['Exact produce match', 'Required date matches harvest window']),
         recommended_quantity: qty, approved_quantity: qty, unit_price: price, expected_revenue: round2(qty * price),
         status: 'APPROVED', order_id: o.id, decided_by: farmAdminId, decided_at: ts(addDays(T, -3), 9), created_at: ts(addDays(T, -3), 8),
@@ -284,7 +303,7 @@ export async function seed({ log = console.log } = {}) {
     await insert(client, 'harvest_matches', {
       farm_id: comcrop.id, run_id: run.id, harvest_batch_id: basil.id, demand_request_id: rejectedDemand.id, buyer_id: buyers.catererE.id,
       match_score: 66, reasons: JSON.stringify(['Exact produce match', 'Buyer price $22.00 meets farm minimum']),
-      recommended_quantity: 4, unit_price: 22, expected_revenue: 88, status: 'REJECTED', decision_note: 'Demo: reserved for premium buyers',
+      recommended_quantity: 4, unit_price: 22, expected_revenue: 88, status: 'REJECTED', decision_note: 'Demo: reserved for premium buyers', market_route: 'INSTITUTIONAL',
       decided_by: farmAdminId, decided_at: ts(addDays(T, -3), 9), created_at: ts(addDays(T, -3), 8),
     });
 

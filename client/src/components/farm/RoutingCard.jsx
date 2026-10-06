@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../services/api.js';
 import { useApi } from '../../hooks/useApi.js';
 import { useToast } from '../../context/ToastContext.jsx';
+import { useFarm } from '../../context/FarmContext.jsx';
 import { Badge, Card, Field, Modal, fieldErrors } from '../ui.jsx';
 import { Icons } from '../Icons.jsx';
 import { date, dateTime, kg, label } from '../../utils/format.js';
@@ -10,9 +11,9 @@ import { date, dateTime, kg, label } from '../../utils/format.js';
 const STAGES = ['PREMIUM', 'COMMUNITY', 'RESCUE', 'CLEARANCE', 'DONATION'];
 const URGENCY_TONE = { LOW: 'low', MEDIUM: 'medium', HIGH: 'high', CRITICAL: 'high' };
 const ACTION_LINK = {
-  COMMUNITY_PROMOTION: [['/farm/demandpool', 'Open DemandPool'], ['/farm/campaigns', 'Community campaign']],
+  COMMUNITY_PROMOTION: [['/farm/demandpool', 'Open DemandPool', 'network'], ['/farm/campaigns', 'Community outreach']],
   MOVE_TO_RESCUE: [['/farm/rescue', 'Go to Rescue']],
-  B2B_CLEARANCE: [['/farm/campaigns', 'B2B clearance campaign']],
+  B2B_CLEARANCE: [['/farm/campaigns', 'B2B clearance outreach']],
 };
 
 function DispositionModal({ batch, onClose, onSaved }) {
@@ -58,8 +59,12 @@ function DispositionModal({ batch, onClose, onSaved }) {
   );
 }
 
-/** Dynamic Perishable Inventory Routing for one batch, plus its donation / alternative-use records. */
+/**
+ * Shelf-life window for one batch: how urgency rises as produce ages (it feeds MarketRoute's urgency
+ * factor), plus the final disposition records — donation, alternative use or waste.
+ */
 export default function RoutingCard({ batch, canAct, onChanged }) {
+  const { features } = useFarm();
   const [recording, setRecording] = useState(false);
   const dispositions = useApi(() => api.get(`/harvests/${batch.id}/dispositions`), [batch.id, batch.disposedQuantity]);
   const r = batch.routing;
@@ -68,8 +73,8 @@ export default function RoutingCard({ batch, canAct, onChanged }) {
 
   return (
     <Card
-      title="Dynamic Perishable Inventory Routing"
-      description={`Recommended sales route as ${batch.produceName} ages (shelf life ${r.shelfLifeDays} days). Suggestions only — you decide.`}
+      title="Shelf-life window & final disposition"
+      description={`How urgency rises as ${batch.produceName} ages (shelf life ${r.shelfLifeDays} days). Feeds MarketRoute's urgency score. Suggestions only — you decide.`}
       actions={<Badge tone={URGENCY_TONE[r.urgency]}>{label(r.urgency)} urgency</Badge>}
     >
       <div className="row-between">
@@ -80,7 +85,8 @@ export default function RoutingCard({ batch, canAct, onChanged }) {
         </div>
         {canAct && r.active && (
           <div className="row">
-            {(ACTION_LINK[r.action] || []).map(([to, text]) => <Link key={to + text} className="btn btn-sm" to={to}>{text}</Link>)}
+            {(ACTION_LINK[r.action] || []).filter(([, , needs]) => !needs || features.networkFeaturesEnabled)
+              .map(([to, text]) => <Link key={to + text} className="btn btn-sm" to={to}>{text}</Link>)}
             <button className={`btn btn-sm ${r.action === 'RECORD_DISPOSITION' ? 'btn-primary' : ''}`} onClick={() => setRecording(true)}>
               <Icons.Heart />Record donation / use
             </button>

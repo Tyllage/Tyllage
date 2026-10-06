@@ -1,13 +1,18 @@
 /**
  * Demand Recovery — when produce is left unallocated (buyer cancels, harvest exceeds demand, coverage
- * stays low), re-run matching against remaining eligible demand and recommend next steps.
+ * stays low), re-run commercial-route comparison and buyer matching against the remaining eligible
+ * channels, and recommend the next stage (proposal v3 §8.5):
+ *   Primary route → Alternative route → Rescue route → Final disposition record.
  * Nothing is executed automatically: every suggestion requires farm admin approval.
  */
 import { query } from '../config/db.js';
 import { camelize } from '../utils/case.js';
 import { round2 } from '../utils/numbers.js';
-import { listBatches, toBatchDTO } from '../models/harvestModel.js';
+import { ROUTE_LABELS } from '../config/rules.js';
+import { listBatches, toBatchDTO, findBatchById } from '../models/harvestModel.js';
 import { runMatching, getMatchesForBatch } from './harvestMatchService.js';
+import { assessBatch, compactAssessment } from './marketRouteService.js';
+import { getPolicy } from './policyService.js';
 import { assertFarmAccess } from './farmAccessService.js';
 
 export const RECOVERY_TRIGGERS = {
@@ -59,18 +64,38 @@ export async function listRecoveryCandidates(farmId) {
   return candidates;
 }
 
+/**
+ * Which recovery stage applies now. PRIMARY while the farm's primary route (or, before a route is chosen,
+ * any route) still has strong demand; ALTERNATIVE when only other routes do; then RESCUE; and finally a
+ * FINAL_DISPOSITION record once the produce is past its commercial window.
+ */
+export function recoveryStage(summary, { primaryRoute, routingStage } = {}) {
+  if (summary.potentialStrongTotal > 0) {
+    if (!primaryRoute) return 'PRIMARY';
+    return (summary.potentialByRoute?.[primaryRoute] || 0) > 0 ? 'PRIMARY' : 'ALTERNATIVE';
+  }
+  if (!(summary.remainingAfterStrong > 0)) return null;
+  return routingStage === 'DONATION' ? 'FINAL_DISPOSITION' : 'RESCUE';
+}
+
 /** Turns a recovery run summary into explicit, approval-required suggestions. */
 export function buildRecoverySuggestions(summary, unit = 'kg', { routingStage } = {}) {
   const suggestions = [];
   if (summary.potentialStrongTotal > 0) {
+    const routes = Object.entries(summary.potentialByRoute || {})
+      .filter(([, q]) => q > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([route, quantity]) => ({ route, label: ROUTE_LABELS[route], quantity }));
     suggestions.push({
       type: 'APPROVE_MATCHES',
       quantity: summary.potentialStrongTotal,
-      message: `Review and approve recovery matches for ${summary.potentialStrongTotal}${unit}`,
+      routes,
+      message: `Review and approve recovery matches for ${summary.potentialStrongTotal}${unit}${routes.length ? ` (${routes.map((r) => `${r.label} ${r.quantity}${unit}`).join(', ')})` : ''}`,
     });
   }
   let remainder = round2(summary.remainingAfterStrong);
-  if (remainder > 0 && summary.demandPoolQuantity > 0) {
+  // DemandPool is a Phase 3 network feature: only suggested when the preview is enabled.
+  if (remainder > 0 && summary.demandPoolQuantity > 0 && getPolicy().networkFeaturesEnabled) {
     const qty = round2(Math.min(remainder, summary.demandPoolQuantity));
     suggestions.push({
       type: 'DEMAND_POOL',
@@ -92,7 +117,7 @@ export function buildRecoverySuggestions(summary, unit = 'kg', { routingStage } 
       message:
         summary.potentialStrongTotal > 0
           ? `Move the remaining ${remainder}${unit} to Rescue`
-          : `No strong normal-market demand remains. Move ${remainder}${unit} to Rescue`,
+          : `No strong demand remains on any route. Move ${remainder}${unit} to Rescue`,
     });
   }
   if (!suggestions.length) {
@@ -103,12 +128,14 @@ export function buildRecoverySuggestions(summary, unit = 'kg', { routingStage } 
 
 export async function startRecovery(user, batchId, { trigger } = {}, ip) {
   const result = await runMatching(user, batchId, { runType: 'RECOVERY', trigger: trigger || 'MANUAL', ip });
-  const suggestions = buildRecoverySuggestions(result.run.summary, result.batch.unit, { routingStage: result.batch.routing?.stage });
-  await query(`UPDATE match_runs SET summary = summary || $1::jsonb WHERE id = $2`, [
-    JSON.stringify({ suggestions }),
-    result.run.id,
-  ]);
-  return { ...result, recovery: { ...result.run.summary, suggestions } };
+  const opts = { routingStage: result.batch.routing?.stage, primaryRoute: result.batch.primaryRoute };
+  const suggestions = buildRecoverySuggestions(result.run.summary, result.batch.unit, opts);
+  const stage = recoveryStage(result.run.summary, opts);
+  // Route comparison over the channels that remain eligible after the run's exclusions.
+  const routes = compactAssessment(await assessBatch(await findBatchById(batchId)));
+  const extra = { suggestions, stage, primaryRoute: opts.primaryRoute || null, ...routes };
+  await query(`UPDATE match_runs SET summary = summary || $1::jsonb WHERE id = $2`, [JSON.stringify(extra), result.run.id]);
+  return { ...result, recovery: { ...result.run.summary, ...extra } };
 }
 
 /** Latest recovery run for a batch (if any) alongside current matches. */

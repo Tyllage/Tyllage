@@ -1,5 +1,5 @@
 /**
- * Analytics derived only from database records. When a denominator is zero (no data), the metric is
+ * Tyllage Insights (proposal v3 §8.8) — analytics derived only from database records. When a denominator is zero (no data), the metric is
  * returned with value null and `sufficient: false` so the UI shows "Not enough data yet" instead of
  * inventing a number.
  */
@@ -7,7 +7,8 @@ import { query } from '../config/db.js';
 import { percent, round2 } from '../utils/numbers.js';
 import { todayISO } from '../utils/dates.js';
 import { z } from 'zod';
-import { buyerChannel, emptyChannelTotals, CHANNELS } from '../config/rules.js';
+import { orderRoute, emptyRouteTotals, ROUTE_LABELS } from '../config/rules.js';
+import { getPolicy } from './policyService.js';
 import { listBatches, toBatchDTO } from '../models/harvestModel.js';
 import { validate } from '../utils/validate.js';
 import { camelizeAll } from '../utils/case.js';
@@ -30,8 +31,10 @@ async function loadExtendedKpiData(farmId) {
          FROM batch_dispositions WHERE farm_id = $1`,
       [farmId]
     ),
+    // Each line carries its share of the order's estimated fulfilment cost (split by quantity).
     query(
-      `SELECT oi.quantity, oi.unit_price, hb.production_cost AS cost
+      `SELECT oi.quantity, oi.unit_price, hb.production_cost AS cost,
+              COALESCE(o.fulfilment_cost, 0) * oi.quantity / NULLIF(SUM(oi.quantity) OVER (PARTITION BY o.id), 0) AS fulfilment
          FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN harvest_batches hb ON hb.id = oi.harvest_batch_id
         WHERE o.farm_id = $1 AND o.status = ANY($2::text[])`,
       [farmId, SOLD_STATUSES]
@@ -42,24 +45,27 @@ async function loadExtendedKpiData(farmId) {
     allocations: allocations.rows.map((r) => ({ batchId: r.harvest_batch_id, at: new Date(r.at), quantity: Number(r.quantity) })),
     redirectedKg: Number(dispositions.rows[0].redirected),
     wastedKg: Number(dispositions.rows[0].wasted),
-    marginLines: lines.rows.map((r) => ({ quantity: r.quantity, unitPrice: r.unit_price, cost: r.cost })),
+    marginLines: lines.rows.map((r) => ({ quantity: r.quantity, unitPrice: r.unit_price, cost: r.cost, fulfilment: Number(r.fulfilment || 0) })),
   };
 }
 
 // ---------------------------------------------------------------- pilot success framework
 
-/** KPIs tracked against a pre-pilot baseline (proposal §14.1). `baselineApplicable: false` = "N/A before Tyllage". */
+/**
+ * Pilot success framework (proposal v3 §12). The seven headline KPIs come first, with the proposal's
+ * definitions; supporting measures follow. `baselineApplicable: false` = "N/A before Tyllage".
+ */
 export const BASELINE_METRICS = [
-  { key: 'demandCoverage', label: 'Demand Coverage', unit: '%' },
-  { key: 'sellThrough', label: 'Harvest Sell-Through', unit: '%' },
-  { key: 'atRiskQuantity', label: 'At-Risk Produce', unit: 'kg', lowerIsBetter: true },
-  { key: 'demandRecoveryTime', label: 'Demand Recovery Time', unit: 'hours', lowerIsBetter: true },
-  { key: 'repeatBuyerRate', label: 'Repeat Buyer Rate', unit: '%' },
-  { key: 'matchConversion', label: 'Match Conversion Rate', unit: '%', baselineApplicable: false },
-  { key: 'rescueRate', label: 'Rescue Rate', unit: '%' },
-  { key: 'wasteAvoided', label: 'Waste Avoided', unit: 'kg' },
-  { key: 'averageMarginPerKg', label: 'Average Margin per kg', unit: '$/kg' },
-  { key: 'channelConcentration', label: 'Channel Concentration', unit: '%', lowerIsBetter: true },
+  { key: 'demandCoverage', label: 'Demand Coverage', definition: 'Confirmed demand ÷ expected harvest', unit: '%', headline: true },
+  { key: 'sellThrough', label: 'Harvest Sell-Through', definition: 'Produce sold ÷ total harvest', unit: '%', headline: true },
+  { key: 'demandRecoveryTime', label: 'Demand Recovery Time', definition: 'Time to replace displaced demand', unit: 'hours', lowerIsBetter: true, headline: true },
+  { key: 'averageMarginPerKg', label: 'Average Margin / kg', definition: 'Commercial margin retained per kg sold, after fulfilment', unit: '$/kg', headline: true },
+  { key: 'channelConcentration', label: 'Channel Concentration', definition: 'Revenue share from largest buyer', unit: '%', lowerIsBetter: true, headline: true },
+  { key: 'matchConversion', label: 'Match Conversion', definition: 'Approved recommendations converting to transactions', unit: '%', baselineApplicable: false, headline: true },
+  { key: 'notCommercialised', label: 'Waste / At-Risk Quantity', definition: 'Quantity not successfully commercialised', unit: 'kg', lowerIsBetter: true, headline: true },
+  { key: 'repeatBuyerRate', label: 'Repeat Buyer Rate', definition: 'Buyers with 2+ orders ÷ buyers', unit: '%' },
+  { key: 'rescueRate', label: 'Rescue Rate', definition: 'Recovered at-risk produce ÷ at-risk produce', unit: '%' },
+  { key: 'wasteAvoided', label: 'Waste Avoided', definition: 'At-risk kg sold, donated or put to alternative use', unit: 'kg' },
 ];
 
 const baselineSchema = z.object({
@@ -117,7 +123,7 @@ export async function getComparison(farmId) {
   const live = {
     demandCoverage: m.demandCoverage.value,
     sellThrough: m.sellThrough.value,
-    atRiskQuantity: analytics.totals.atRiskQuantity,
+    notCommercialised: m.notCommercialised.value,
     demandRecoveryTime: m.demandRecoveryTime.value,
     repeatBuyerRate: m.repeatBuyerRate.value,
     matchConversion: m.matchConversion.value,
@@ -128,6 +134,8 @@ export async function getComparison(farmId) {
   };
   return { rows: buildComparison(rows, live), baselines: camelizeAll(rows) };
 }
+
+const SOLD_STATUSES = ['CONFIRMED', 'READY', 'COMPLETED'];
 
 // ---------------------------------------------------------------- pure formulas
 
@@ -215,25 +223,138 @@ export function wasteAvoided(recoveredKg, redirectedKg, wastedKg) {
   };
 }
 
-/** Average Margin per Kilogram = Σ (unit price − production cost) × qty ÷ Σ qty, over sales with a recorded cost. */
+/**
+ * Average Margin per Kilogram = Σ ((unit price − production cost) × qty − fulfilment cost) ÷ Σ qty,
+ * over sales with a recorded production cost. Lines without a fulfilment estimate count it as 0.
+ */
 export function averageMarginPerKg(lines) {
   const known = lines.filter((l) => l.cost !== null && l.cost !== undefined);
   const qty = known.reduce((s, l) => s + Number(l.quantity), 0);
-  const margin = known.reduce((s, l) => s + (Number(l.unitPrice) - Number(l.cost)) * Number(l.quantity), 0);
+  const fulfilment = known.reduce((s, l) => s + Number(l.fulfilment || 0), 0);
+  const margin = known.reduce((s, l) => s + (Number(l.unitPrice) - Number(l.cost)) * Number(l.quantity), 0) - fulfilment;
   return {
     value: qty > 0 ? round2(margin / qty) : null,
     unit: '$/kg',
     numerator: round2(margin),
     denominator: round2(qty),
+    fulfilment: round2(fulfilment),
     coverage: lines.length ? Math.round((known.length / lines.length) * 100) : 0,
     sufficient: qty > 0,
-    formula: 'Σ (unit price − production cost) × quantity ÷ Σ quantity sold (sales with a recorded cost)',
+    formula: 'Σ ((unit price − production cost) × quantity − fulfilment cost) ÷ Σ quantity sold (sales with a recorded cost)',
   };
+}
+
+/** Quantity not successfully commercialised, over batches whose commercial window has closed. */
+export function notCommercialised(batches) {
+  const value = round2(batches.reduce((s, b) => s + Math.max(0, Number(b.harvest) - Number(b.sold)), 0));
+  return {
+    value: batches.length ? value : null,
+    unit: 'kg',
+    batches: batches.length,
+    harvested: round2(batches.reduce((s, b) => s + Number(b.harvest), 0)),
+    sufficient: batches.length > 0,
+    formula: 'Harvest − quantity sold (incl. Rescue), for closed batches or batches past their shelf-life window',
+  };
+}
+
+/**
+ * Insights by MarketRoute: which routes preserve margin after fulfilment, how often orders cancel, and how
+ * much surplus each route recovered. `lines` are order lines; `firstRecoveryAt` maps batch id → first
+ * Demand Recovery run time (lines created after it count as recovered).
+ */
+export function routePerformance(lines, firstRecoveryAt = new Map()) {
+  const out = Object.fromEntries(Object.keys(emptyRouteTotals()).map((k) => [k, {
+    route: k, label: ROUTE_LABELS[k], orders: new Set(), cancelledOrders: new Set(), revenue: 0, quantity: 0,
+    costedQty: 0, netMargin: 0, fulfilment: 0, recoveredQuantity: 0,
+  }]));
+  for (const l of lines) {
+    const r = out[orderRoute(l.source, l.buyerType)];
+    if (l.status === 'CANCELLED') {
+      r.cancelledOrders.add(l.orderId);
+      continue;
+    }
+    r.orders.add(l.orderId);
+    if (!SOLD_STATUSES.includes(l.status)) continue;
+    const qty = Number(l.quantity);
+    r.quantity += qty;
+    r.revenue += qty * Number(l.unitPrice);
+    r.fulfilment += Number(l.fulfilment || 0);
+    if (l.cost !== null && l.cost !== undefined) {
+      r.costedQty += qty;
+      r.netMargin += (Number(l.unitPrice) - Number(l.cost)) * qty - Number(l.fulfilment || 0);
+    }
+    const recoveryAt = firstRecoveryAt.get(l.batchId);
+    if (recoveryAt && new Date(l.createdAt) >= recoveryAt) r.recoveredQuantity += qty;
+  }
+  return Object.values(out).map((r) => {
+    const all = r.orders.size + r.cancelledOrders.size;
+    return {
+      route: r.route,
+      label: r.label,
+      orders: r.orders.size,
+      revenue: round2(r.revenue),
+      quantity: round2(r.quantity),
+      averagePricePerKg: r.quantity > 0 ? round2(r.revenue / r.quantity) : null,
+      fulfilmentPerKg: r.quantity > 0 ? round2(r.fulfilment / r.quantity) : null,
+      netMarginPerKg: r.costedQty > 0 ? round2(r.netMargin / r.costedQty) : null,
+      cancellationRate: all > 0 ? percent(r.cancelledOrders.size, all, 1) : null,
+      recoveredQuantity: round2(r.recoveredQuantity),
+    };
+  });
 }
 
 // ---------------------------------------------------------------- aggregation
 
-const SOLD_STATUSES = ['CONFIRMED', 'READY', 'COMPLETED'];
+/** Insight inputs: order lines by route, recovery start per batch, coverage by crop, closed-window batches. */
+async function loadInsights(farmId, today) {
+  const [lines, recoveries, coverage, windows] = await Promise.all([
+    query(
+      `SELECT o.id AS order_id, o.source, o.status, o.created_at, bp.buyer_type, oi.harvest_batch_id AS batch_id,
+              oi.quantity, oi.unit_price, hb.production_cost AS cost,
+              COALESCE(o.fulfilment_cost, 0) * oi.quantity / NULLIF(SUM(oi.quantity) OVER (PARTITION BY o.id), 0) AS fulfilment
+         FROM orders o JOIN buyer_profiles bp ON bp.id = o.buyer_id JOIN order_items oi ON oi.order_id = o.id
+         LEFT JOIN harvest_batches hb ON hb.id = oi.harvest_batch_id
+        WHERE o.farm_id = $1`,
+      [farmId]
+    ),
+    query(
+      `SELECT harvest_batch_id, MIN(created_at) AS at FROM match_runs WHERE farm_id = $1 AND run_type = 'RECOVERY' GROUP BY harvest_batch_id`,
+      [farmId]
+    ),
+    // Which crops achieve stronger demand coverage (batches harvesting within the last 60 days, or later).
+    query(
+      `SELECT p.name, p.unit, COUNT(*) AS batches, SUM(bs.harvest_quantity) AS harvest, SUM(bs.allocated_quantity) AS confirmed
+         FROM harvest_batches hb JOIN produce p ON p.id = hb.produce_id JOIN batch_stock bs ON bs.harvest_batch_id = hb.id
+        WHERE hb.farm_id = $1 AND hb.harvest_date >= ($2::date - 60)
+        GROUP BY p.id ORDER BY p.name`,
+      [farmId, today]
+    ),
+    // Batches whose commercial window has closed: closed, or past harvest date + shelf life.
+    query(
+      `SELECT bs.harvest_quantity AS harvest,
+              (SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+                WHERE oi.harvest_batch_id = hb.id AND o.status = ANY($3::text[])) AS sold
+         FROM harvest_batches hb JOIN produce p ON p.id = hb.produce_id JOIN batch_stock bs ON bs.harvest_batch_id = hb.id
+        WHERE hb.farm_id = $1 AND hb.harvest_date <= $2
+          AND (hb.status = 'CLOSED' OR hb.harvest_date + COALESCE(p.shelf_life_days, $4) < $2::date)`,
+      [farmId, today, SOLD_STATUSES, getPolicy().defaultShelfLifeDays]
+    ),
+  ]);
+  const firstRecoveryAt = new Map(recoveries.rows.map((r) => [r.harvest_batch_id, new Date(r.at)]));
+  const routeLines = lines.rows.map((r) => ({
+    orderId: r.order_id, source: r.source, status: r.status, createdAt: r.created_at, buyerType: r.buyer_type, batchId: r.batch_id,
+    quantity: r.quantity, unitPrice: r.unit_price, cost: r.cost, fulfilment: Number(r.fulfilment || 0),
+  }));
+  return {
+    routes: routePerformance(routeLines, firstRecoveryAt),
+    coverageByProduce: coverage.rows.map((r) => ({
+      name: r.name, unit: r.unit, batches: Number(r.batches), harvest: round2(r.harvest), confirmed: round2(r.confirmed),
+      coverage: percent(r.confirmed, r.harvest, 1),
+    })),
+    closedWindowBatches: windows.rows,
+  };
+}
+
 
 export async function getFarmAnalytics(farmId) {
   const today = todayISO();
@@ -255,7 +376,7 @@ export async function getFarmAnalytics(farmId) {
       [farmId, today, SOLD_STATUSES]
     ),
     query(
-      `SELECT bp.id, bp.organisation_name, bp.buyer_type,
+      `SELECT bp.id, bp.organisation_name, bp.buyer_type, MAX(o.created_at) AS last_order_at,
               COUNT(DISTINCT o.id) AS orders, COALESCE(SUM(o.total_amount) FILTER (WHERE o.status = ANY($2::text[])), 0) AS revenue
          FROM orders o JOIN buyer_profiles bp ON bp.id = o.buyer_id
         WHERE o.farm_id = $1 AND o.status <> 'CANCELLED'
@@ -307,6 +428,7 @@ export async function getFarmAnalytics(farmId) {
     listBatches(farmId),
   ]);
   const extra = await loadExtendedKpiData(farmId);
+  const insights = await loadInsights(farmId, today);
 
   const batches = openBatches.map(toBatchDTO);
   const expected = batches.reduce((s, b) => s + b.harvestQuantity, 0);
@@ -319,8 +441,6 @@ export async function getFarmAnalytics(farmId) {
   const r = rescue.rows[0];
   const ar = atRisk.rows[0];
 
-  const revenueByChannel = emptyChannelTotals();
-  for (const b of buyers.rows) revenueByChannel[buyerChannel(b.buyer_type)] = round2(revenueByChannel[buyerChannel(b.buyer_type)] + Number(b.revenue));
   const largestBuyer = [...buyers.rows].sort((a, b) => b.revenue - a.revenue)[0];
 
   return {
@@ -349,10 +469,17 @@ export async function getFarmAnalytics(farmId) {
       demandRecoveryTime: demandRecoveryTime(extra.disruptions, extra.allocations),
       wasteAvoided: wasteAvoided(Number(ar.recovered), extra.redirectedKg, extra.wastedKg),
       averageMarginPerKg: averageMarginPerKg(extra.marginLines),
+      notCommercialised: notCommercialised(insights.closedWindowBatches),
     },
-    channelLabels: CHANNELS,
+    routeLabels: ROUTE_LABELS,
     topProduce: topProduce.rows.map((p) => ({ name: p.name, unit: p.unit, quantity: round2(p.quantity), revenue: round2(p.revenue) })),
-    revenueByChannel,
+    revenueByRoute: Object.fromEntries(insights.routes.map((r) => [r.route, r.revenue])),
+    routePerformance: insights.routes,
+    coverageByProduce: insights.coverageByProduce,
+    buyerReorders: buyers.rows
+      .map((b) => ({ buyerName: b.organisation_name, buyerType: b.buyer_type, orders: Number(b.orders), revenue: round2(b.revenue), lastOrderAt: b.last_order_at, repeat: Number(b.orders) >= 2 }))
+      .sort((a, b) => b.orders - a.orders || b.revenue - a.revenue)
+      .slice(0, 10),
     // A trend needs at least two data points; otherwise the UI shows "Not enough data yet".
     weeklyRevenue: {
       sufficient: weekly.rows.length >= 2,

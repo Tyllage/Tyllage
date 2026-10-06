@@ -13,22 +13,31 @@ export function minViablePrice(cost, minMarginPct) {
   return round2(Number(cost) / (1 - Number(minMarginPct) / 100));
 }
 
-export function marginGuard({ unitPrice, cost, minMarginPct, quantity = 0 }) {
+/**
+ * Margin on a sale. `fulfilment` is the estimated fulfilment cost per unit (0 = margin before logistics);
+ * margin % is always relative to the selling price.
+ */
+export function marginGuard({ unitPrice, cost, minMarginPct, quantity = 0, fulfilment = 0 }) {
   if (cost === null || cost === undefined) {
     return { known: false, status: 'UNKNOWN', message: 'Production cost not recorded — margin unknown' };
   }
   const price = Number(unitPrice);
-  const perUnit = round2(price - Number(cost));
+  const logistics = Number(fulfilment) || 0;
+  const perUnit = round2(price - Number(cost) - logistics);
   const pct = price > 0 ? round1((perUnit / price) * 100) : null;
   let status = 'OK';
   if (perUnit < 0) status = 'LOSS';
   else if (pct < Number(minMarginPct)) status = 'BELOW_MINIMUM';
+  const after = logistics > 0 ? ` after $${logistics.toFixed(2)}/unit fulfilment` : '';
   const message = {
-    OK: `${pct}% margin ($${perUnit.toFixed(2)}/unit) meets the farm minimum of ${minMarginPct}%`,
-    BELOW_MINIMUM: `Margin Guard: ${pct}% margin is below the farm minimum of ${minMarginPct}%`,
-    LOSS: `Margin Guard: sells $${Math.abs(perUnit).toFixed(2)}/unit below production cost`,
+    OK: `${pct}% margin ($${perUnit.toFixed(2)}/unit)${after} meets the farm minimum of ${minMarginPct}%`,
+    BELOW_MINIMUM: `Margin Guard: ${pct}% margin${after} is below the farm minimum of ${minMarginPct}%`,
+    LOSS: `Margin Guard: sells $${Math.abs(perUnit).toFixed(2)}/unit below production cost${after}`,
   }[status];
-  return { known: true, status, perUnit, pct, total: round2(perUnit * quantity), minMarginPct: Number(minMarginPct), message };
+  return {
+    known: true, status, perUnit, pct, total: round2(perUnit * quantity), minMarginPct: Number(minMarginPct),
+    fulfilmentPerUnit: round2(logistics), message,
+  };
 }
 
 /** Batch-level view: viable price floor, margins at preferred/minimum price, and margin on committed sales. */

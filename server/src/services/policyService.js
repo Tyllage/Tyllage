@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { query } from '../config/db.js';
 import { validate } from '../utils/validate.js';
-import { badRequest } from '../utils/errors.js';
+import { badRequest, conflict } from '../utils/errors.js';
 import * as R from '../config/rules.js';
 import { logAudit } from './auditService.js';
 
@@ -22,6 +22,9 @@ export const POLICY_DEFAULTS = Object.freeze({
   defaultShelfLifeDays: R.DEFAULT_SHELF_LIFE_DAYS,
   routingStages: R.ROUTING_STAGES,
   demandPoolMinViableKg: R.DEMANDPOOL_MIN_VIABLE_KG,
+  routeWeights: R.ROUTE_WEIGHTS,
+  // FarmPool / DemandPool are Post-MVP (proposal v3 §10, Phase 3). Off until a platform admin enables the preview.
+  networkFeaturesEnabled: false,
 });
 
 const pct = z.number().min(0).max(100);
@@ -42,12 +45,23 @@ const SCHEMAS = {
     .length(5)
     .refine((s) => s[s.length - 1].upToPct === null && s.slice(0, -1).every((x, i, a) => x.upToPct !== null && (i === 0 || x.upToPct > a[i - 1].upToPct)), 'Stage limits must increase and the last stage must be open-ended'),
   demandPoolMinViableKg: z.number().min(0).max(1000),
+  routeWeights: z
+    .object({ demandFit: pct, price: pct, margin: pct, volume: pct, fulfilment: pct, reliability: pct, urgency: pct })
+    .refine((w) => Object.values(w).reduce((s, x) => s + x, 0) === 100, 'Weights must add up to 100'),
+  networkFeaturesEnabled: z.boolean(),
 };
 
 let cache = structuredClone(POLICY_DEFAULTS);
 
 /** Current effective policies (synchronous; refreshed by loadPolicies / updatePolicies). */
 export const getPolicy = () => cache;
+
+/** Guards the Post-MVP network features (FarmPool, DemandPool). */
+export function assertNetworkFeaturesEnabled() {
+  if (!cache.networkFeaturesEnabled) {
+    throw conflict('FarmPool and DemandPool are Phase 3 features. A platform admin can enable the preview in Policies.', 'FEATURE_NOT_ENABLED');
+  }
+}
 
 export async function loadPolicies() {
   const next = structuredClone(POLICY_DEFAULTS);

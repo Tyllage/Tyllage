@@ -9,6 +9,7 @@ import { assertFarmAccess, assertFarmAdmin } from './farmAccessService.js';
 import { assertProduceBelongsToFarm } from './produceService.js';
 import { logAudit } from './auditService.js';
 import { findBatchById, listBatches, lockBatch, syncBatchStatus, toBatchDTO } from '../models/harvestModel.js';
+import { ROUTE_KEYS } from '../config/rules.js';
 
 export const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE', 'CHEF_PACK'];
 export const DISPOSITION_TYPES = ['DONATION', 'ALTERNATIVE_USE', 'WASTE'];
@@ -16,6 +17,9 @@ const cost = z.coerce.number().min(0).max(100000);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date (YYYY-MM-DD)');
 const positiveQty = z.coerce.number().positive('must be greater than 0').max(1000000);
 const price = z.coerce.number().positive('must be greater than 0').max(100000);
+// Commercial constraint: the routes this batch may be sold through (null/empty = any route).
+const allowedRoutes = z.array(z.enum(ROUTE_KEYS)).max(ROUTE_KEYS.length).nullable().optional()
+  .transform((v) => (v === undefined ? undefined : v && v.length ? [...new Set(v)] : null));
 
 const createSchema = z
   .object({
@@ -27,6 +31,7 @@ const createSchema = z
     preferredPrice: price,
     minPrice: price,
     productionCost: cost.nullable().optional(),
+    allowedRoutes,
     notes: z.string().trim().max(2000).nullable().optional(),
   })
   .refine((d) => d.minPrice <= d.preferredPrice, {
@@ -43,9 +48,11 @@ const updateSchema = z.object({
   preferredPrice: price.optional(),
   minPrice: price.optional(),
   productionCost: cost.nullable().optional(),
+  allowedRoutes,
   notes: z.string().trim().max(2000).nullable().optional(),
 });
-const PRICE_FIELDS = ['preferredPrice', 'minPrice', 'productionCost'];
+// Pricing and commercial constraints are admin-only.
+const PRICE_FIELDS = ['preferredPrice', 'minPrice', 'productionCost', 'allowedRoutes'];
 
 const dispositionSchema = z.object({
   dispositionType: z.enum(DISPOSITION_TYPES),
@@ -77,10 +84,10 @@ export async function createHarvest(user, farmId, input, ip) {
     await assertProduceBelongsToFarm(d.produceId, farmId, client);
     const { rows } = await client.query(
       `INSERT INTO harvest_batches (farm_id, produce_id, expected_quantity, actual_quantity, harvest_date, grade,
-                                    preferred_price, min_price, production_cost, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                                    preferred_price, min_price, production_cost, notes, created_by, allowed_routes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
       [farmId, d.produceId, d.expectedQuantity, d.actualQuantity ?? null, d.harvestDate, d.grade,
-        d.preferredPrice, d.minPrice, d.productionCost ?? null, d.notes ?? null, user.id]
+        d.preferredPrice, d.minPrice, d.productionCost ?? null, d.notes ?? null, user.id, d.allowedRoutes ?? null]
     );
     const id = rows[0].id;
     await logAudit({ farmId, userId: user.id, action: 'HARVEST_CREATED', entityType: 'harvest_batch', entityId: id, details: d, ip }, client);
@@ -108,6 +115,7 @@ export async function updateHarvest(user, id, input, ip) {
       min_price: d.minPrice ?? row.min_price,
       production_cost: d.productionCost !== undefined ? d.productionCost : row.production_cost,
       notes: d.notes !== undefined ? d.notes : row.notes,
+      allowed_routes: d.allowedRoutes !== undefined ? d.allowedRoutes : row.allowed_routes,
     };
     if (merged.min_price > merged.preferred_price) {
       throw badRequest('Minimum price cannot exceed preferred price', 'VALIDATION_ERROR');
@@ -125,10 +133,10 @@ export async function updateHarvest(user, id, input, ip) {
     await client.query(
       `UPDATE harvest_batches
           SET expected_quantity = $1, actual_quantity = $2, harvest_date = $3, grade = $4,
-              preferred_price = $5, min_price = $6, notes = $7, production_cost = $8, updated_at = NOW()
-        WHERE id = $9`,
+              preferred_price = $5, min_price = $6, notes = $7, production_cost = $8, allowed_routes = $9, updated_at = NOW()
+        WHERE id = $10`,
       [merged.expected_quantity, merged.actual_quantity, merged.harvest_date, merged.grade,
-        merged.preferred_price, merged.min_price, merged.notes, merged.production_cost, id]
+        merged.preferred_price, merged.min_price, merged.notes, merged.production_cost, merged.allowed_routes, id]
     );
     await logAudit({ farmId: row.farm_id, userId: user.id, action: 'HARVEST_UPDATED', entityType: 'harvest_batch', entityId: id, details: d, ip }, client);
     return toBatchDTO(await syncBatchStatus(id, client));

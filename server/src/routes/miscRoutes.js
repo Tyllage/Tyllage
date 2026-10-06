@@ -5,6 +5,8 @@ import { verifyToken, requireRole, BUYER_ROLES } from '../middleware/auth.js';
 import { buyerController, notificationController, whatsappController } from '../controllers/index.js';
 import { isOpenAIConfigured } from '../services/openaiService.js';
 import { whatsappMode } from '../services/whatsappService.js';
+import { getPolicy } from '../services/policyService.js';
+import { ok } from '../utils/response.js';
 
 const router = Router();
 
@@ -27,6 +29,9 @@ router.get('/health', async (_req, res) => {
     },
   });
 });
+
+/** Feature flags the client needs to shape navigation (no business rules or secrets). */
+router.get('/features', verifyToken, (_req, res) => ok(res, { networkFeaturesEnabled: getPolicy().networkFeaturesEnabled }));
 
 router.get('/buyers/me', verifyToken, requireRole(...BUYER_ROLES), buyerController.me);
 router.patch('/buyers/me', verifyToken, requireRole(...BUYER_ROLES), buyerController.updateMe);

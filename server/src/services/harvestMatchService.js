@@ -5,9 +5,10 @@
  * recommendation carries human-readable reasons. The farm admin approves or rejects each one.
  */
 import { withTransaction, query } from '../config/db.js';
-import { ADJACENT_REGIONS, buyerChannel, emptyChannelTotals } from '../config/rules.js';
+import { ADJACENT_REGIONS, DEMAND_ROUTE_KEYS, buyerRoute } from '../config/rules.js';
 import { getPolicy } from './policyService.js';
 import { marginGuard } from './marginService.js';
+import { estimateFulfilment, resolveMethod } from './fulfilmentService.js';
 import { round2 } from '../utils/numbers.js';
 import { addDays, daysBetween } from '../utils/dates.js';
 import { camelize } from '../utils/case.js';
@@ -278,15 +279,12 @@ function describeExcluded(demand, reason) {
 
 // ---------------------------------------------------------------- persistence
 
-/** Open demand this farm may serve, joined with buyer info needed for scoring. */
-const loadCandidates = (client, batch) => loadOpenDemandForFarm(batch.farm_id, client);
-
 /**
  * Demand that must not be recommended for this batch:
  *  - the farm already rejected this demand for this batch;
  *  - the buyer cancelled an order on this batch (don't immediately re-offer the same stock).
  */
-async function loadExclusions(client, batchId) {
+export async function loadExclusions(client, batchId) {
   const exclusions = new Map();
   const rejected = await client.query(
     `SELECT DISTINCT demand_request_id FROM harvest_matches WHERE harvest_batch_id = $1 AND status = 'REJECTED'`,
@@ -302,27 +300,36 @@ async function loadExclusions(client, batchId) {
   return { exclusions, cancelledBuyerIds: new Set(cancelledBuyers.rows.map((r) => r.buyer_id)) };
 }
 
+/** Everything scoring needs for one batch: open demand, exclusions and buyer reliability. Shared with MarketRoute. */
+export async function loadMatchingContext(client, batch) {
+  const candidates = await loadOpenDemandForFarm(batch.farm_id, client);
+  const { exclusions, cancelledBuyerIds } = await loadExclusions(client, batch.id);
+  for (const c of candidates) {
+    if (!exclusions.has(c.id) && cancelledBuyerIds.has(c.buyer_id)) {
+      exclusions.set(c.id, 'Buyer cancelled an order for this batch');
+    }
+  }
+  const reliability = await getReliabilityStats([...new Set(candidates.map((c) => c.buyer_id))], client);
+  return { candidates, exclusions, reliability };
+}
+
 /**
  * Runs HarvestMatch (or Demand Recovery) for a batch and stores the suggestions.
  * Previous unactioned suggestions for the batch are superseded. Nothing is allocated here —
  * allocation only happens when the farm admin approves a match.
  */
-export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', trigger = null, ip } = {}, existingClient) {
+export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', trigger = null, route = null, ip } = {}, existingClient) {
   return withTransaction(async (client) => {
     const batch = await lockBatch(batchId, client);
     if (!batch) throw notFound('Harvest batch not found');
     assertFarmAdmin(user, batch.farm_id);
     if (batch.status === 'CLOSED') throw conflict('Matching cannot run on a closed batch', 'BATCH_CLOSED');
+    if (route && !DEMAND_ROUTE_KEYS.includes(route)) throw conflict(`HarvestMatch cannot run within the ${route} route`, 'ROUTE_NOT_MATCHABLE');
 
-    const candidates = await loadCandidates(client, batch);
-    const { exclusions, cancelledBuyerIds } = await loadExclusions(client, batchId);
-    for (const c of candidates) {
-      if (!exclusions.has(c.id) && cancelledBuyerIds.has(c.buyer_id)) {
-        exclusions.set(c.id, 'Buyer cancelled an order for this batch');
-      }
-    }
-    const reliability = await getReliabilityStats([...new Set(candidates.map((c) => c.buyer_id))], client);
-    const result = rankAndAllocate(batch, candidates, { exclusions, reliability });
+    const ctx = await loadMatchingContext(client, batch);
+    // Within a route (proposal §8.3): only buyers in that channel are ranked.
+    const candidates = route ? ctx.candidates.filter((c) => buyerRoute(c.buyer_type) === route) : ctx.candidates;
+    const result = rankAndAllocate(batch, candidates, ctx);
 
     await client.query(
       `UPDATE harvest_matches SET status = 'SUPERSEDED' WHERE harvest_batch_id = $1 AND status = 'SUGGESTED'`,
@@ -336,21 +343,21 @@ export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', tri
     const summary = buildSummary(result, new Set(existing.rows.map((r) => r.buyer_id)));
     const run = await client.query(
       `INSERT INTO match_runs (farm_id, harvest_batch_id, run_type, trigger_reason, remaining_quantity,
-                               candidates_count, excluded, summary, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+                               candidates_count, excluded, summary, created_by, market_route)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [batch.farm_id, batchId, runType, trigger, result.supply, result.matches.length,
-        JSON.stringify(result.excluded), JSON.stringify(summary), user.id]
+        JSON.stringify(result.excluded), JSON.stringify(summary), user.id, route]
     );
     const runId = run.rows[0].id;
 
     for (const m of result.matches) {
       await client.query(
         `INSERT INTO harvest_matches (farm_id, run_id, harvest_batch_id, demand_request_id, buyer_id, source, match_score,
-                                      score_breakdown, reasons, warnings, recommended_quantity, unit_price, expected_revenue)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                                      score_breakdown, reasons, warnings, recommended_quantity, unit_price, expected_revenue, market_route)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [batch.farm_id, runId, batchId, m.demand.id, m.demand.buyer_id, runType, m.matchScore,
           JSON.stringify(m.breakdown), JSON.stringify(m.reasons), JSON.stringify(m.warnings),
-          m.recommendedQuantity, m.unitPrice, m.expectedRevenue]
+          m.recommendedQuantity, m.unitPrice, m.expectedRevenue, buyerRoute(m.demand.buyer_type)]
       );
     }
 
@@ -361,7 +368,7 @@ export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', tri
         action: runType === 'RECOVERY' ? 'RECOVERY_STARTED' : 'HARVESTMATCH_RUN',
         entityType: 'harvest_batch',
         entityId: batchId,
-        details: { runId, trigger, matches: result.matches.length, excluded: result.excluded.length },
+        details: { runId, trigger, route, matches: result.matches.length, excluded: result.excluded.length },
         ip,
       },
       client
@@ -371,18 +378,18 @@ export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', tri
   }, existingClient);
 }
 
-/** Groups strong matches by channel for the recovery view; weak matches are reported separately. */
+/** Groups strong matches by MarketRoute for the recovery view; weak matches are reported separately. */
 export function buildSummary(result, existingCustomerIds = new Set()) {
   const threshold = getPolicy().strongMatchThreshold;
-  const channels = emptyChannelTotals();
+  const routes = Object.fromEntries(DEMAND_ROUTE_KEYS.map((k) => [k, 0]));
   let strongTotal = 0;
   let weakTotal = 0;
   let existingCustomers = 0;
   let subscribers = 0;
   for (const m of result.matches) {
     if (m.matchScore >= threshold) {
-      const ch = buyerChannel(m.demand.buyer_type);
-      channels[ch] = round2(channels[ch] + m.recommendedQuantity);
+      const r = buyerRoute(m.demand.buyer_type);
+      routes[r] = round2(routes[r] + m.recommendedQuantity);
       strongTotal = round2(strongTotal + m.recommendedQuantity);
       if (existingCustomerIds.has(m.demand.buyer_id)) existingCustomers = round2(existingCustomers + m.recommendedQuantity);
       if (m.demand.recurrence && m.demand.recurrence !== 'NONE') subscribers = round2(subscribers + m.recommendedQuantity);
@@ -395,7 +402,7 @@ export function buildSummary(result, existingCustomerIds = new Set()) {
   return {
     remainingAtStart: result.supply,
     strongMatchThreshold: threshold,
-    potentialByChannel: channels,
+    potentialByRoute: routes,
     potentialFromExistingCustomers: existingCustomers,
     potentialFromSubscribers: subscribers,
     potentialStrongTotal: strongTotal,
@@ -434,11 +441,15 @@ export async function getMatchesForBatch(user, batchId, client) {
     await runner.query('SELECT * FROM match_runs WHERE harvest_batch_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [batchId])
   ).rows[0];
 
-  // Decision support from the proposal: margin (Margin Guard) and urgency (routing stage) per match.
+  // Decision support: fulfilment terms and cost, margin before and after fulfilment (Margin Guard), urgency.
   const decorate = (row) => {
     const m = camelize(row);
     const qty = Number(m.approvedQuantity ?? m.recommendedQuantity);
-    m.margin = marginGuard({ unitPrice: m.unitPrice, cost: batch.productionCost, minMarginPct: batch.minMarginPct ?? 0, quantity: qty });
+    const guard = { unitPrice: m.unitPrice, cost: batch.productionCost, minMarginPct: batch.minMarginPct ?? 0, quantity: qty };
+    m.marketRoute = m.marketRoute || buyerRoute(m.buyerType);
+    m.fulfilment = estimateFulfilment(resolveMethod(m.preferredCollectionMethod, batch.fulfilmentMethods), qty, batch.fulfilmentCosts);
+    m.margin = marginGuard(guard);
+    m.netMargin = marginGuard({ ...guard, fulfilment: m.fulfilment.perKg });
     m.urgency = batch.routing?.urgency || null;
     return m;
   };

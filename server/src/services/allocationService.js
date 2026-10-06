@@ -6,6 +6,7 @@
 import { notFound, conflict, badRequest } from '../utils/errors.js';
 import { round2 } from '../utils/numbers.js';
 import { lockBatch, syncBatchStatus } from '../models/harvestModel.js';
+import { estimateFulfilment } from './fulfilmentService.js';
 
 async function lockDemand(client, demandId) {
   const { rows } = await client.query('SELECT * FROM demand_requests WHERE id = $1 FOR UPDATE', [demandId]);
@@ -80,11 +81,13 @@ export async function createAllocatedOrder(client, p) {
   }
 
   const lineTotal = round2(quantity * p.unitPrice);
+  const method = p.collectionMethod || 'FARM_PICKUP';
+  const fulfilmentCost = estimateFulfilment(method, quantity, batch.fulfilment_costs).total;
   const order = await client.query(
-    `INSERT INTO orders (farm_id, buyer_id, status, source, collection_method, scheduled_date, total_amount, notes, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [batch.farm_id, p.buyerId, p.status || 'CONFIRMED', p.source, p.collectionMethod || 'FARM_PICKUP',
-      p.scheduledDate || batch.harvest_date, lineTotal, p.notes || null, p.userId]
+    `INSERT INTO orders (farm_id, buyer_id, status, source, collection_method, scheduled_date, total_amount, notes, created_by, fulfilment_cost)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+    [batch.farm_id, p.buyerId, p.status || 'CONFIRMED', p.source, method,
+      p.scheduledDate || batch.harvest_date, lineTotal, p.notes || null, p.userId, fulfilmentCost]
   );
   const orderId = order.rows[0].id;
   const item = await client.query(
@@ -153,10 +156,12 @@ export async function createMultiLineOrder(client, { buyerId, lines, collectionM
   });
 
   const scheduled = priced.map((x) => x.b.harvest_date).sort().at(-1);
+  const totalQty = priced.reduce((s, x) => s + x.quantity, 0);
+  const fulfilmentCost = estimateFulfilment(method, totalQty, priced[0].b.fulfilment_costs).total;
   const order = await client.query(
-    `INSERT INTO orders (farm_id, buyer_id, status, source, collection_method, scheduled_date, total_amount, notes, created_by)
-     VALUES ($1, $2, 'PENDING', 'DIRECT', $3, $4, $5, $6, $7) RETURNING *`,
-    [farmId, buyerId, collectionMethod || 'FARM_PICKUP', scheduled, total, notes || null, userId]
+    `INSERT INTO orders (farm_id, buyer_id, status, source, collection_method, scheduled_date, total_amount, notes, created_by, fulfilment_cost)
+     VALUES ($1, $2, 'PENDING', 'DIRECT', $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [farmId, buyerId, method, scheduled, total, notes || null, userId, fulfilmentCost]
   );
   for (const x of priced) {
     const item = await client.query(

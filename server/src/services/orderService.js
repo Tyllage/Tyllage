@@ -46,10 +46,16 @@ export async function listOrdersForFarm(farmId, { status } = {}) {
   return camelizeAll(rows);
 }
 
+/** Buyer-facing order: the farm's fulfilment cost estimate is farm-private. */
+function toBuyerOrder(row) {
+  const { fulfilmentCost, ...order } = camelize(row);
+  return order;
+}
+
 export async function listOrdersForBuyer(user) {
   if (!user.buyerId) return [];
   const { rows } = await query(`${ORDER_SELECT} WHERE o.buyer_id = $1 ORDER BY o.created_at DESC`, [user.buyerId]);
-  return camelizeAll(rows);
+  return rows.map(toBuyerOrder);
 }
 
 async function loadOrder(id, client) {
@@ -66,7 +72,7 @@ function canView(user, order) {
 export async function getOrder(user, id) {
   const order = await loadOrder(id);
   if (!canView(user, order)) throw forbidden();
-  return camelize(order);
+  return isFarmSide(user) ? camelize(order) : toBuyerOrder(order);
 }
 
 /**
@@ -145,7 +151,7 @@ export async function updateOrderStatus(user, id, input, ip) {
       body: `${order.farmName}: your order is now ${status.toLowerCase()}.`,
     });
   }
-  return order;
+  return isFarmSide(user) ? order : toBuyerOrder(result.order);
 }
 
 // ---------------------------------------------------------------- direct (bulk) orders
@@ -177,7 +183,7 @@ export async function createDirectOrder(user, input, ip) {
     await logAudit({ farmId: o.farm_id, userId: user.id, action: 'ORDER_PLACED', entityType: 'order', entityId: o.id, details: { items: d.items.length, total: o.total_amount }, ip }, client);
     return loadOrder(o.id, client);
   });
-  const o = camelize(order);
+  const o = toBuyerOrder(order);
   await notifyFarm({
     farmId: o.farmId,
     type: 'ORDER_PLACED',

@@ -5,7 +5,7 @@ import { useFarm } from '../../context/FarmContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Field, Modal, fieldErrors } from '../ui.jsx';
-import { label, todayISO } from '../../utils/format.js';
+import { label, todayISO, ROUTES } from '../../utils/format.js';
 
 // Premium · Everyday · Rescue · Chef Pack (bulk produce where appearance matters less).
 const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE', 'CHEF_PACK'];
@@ -26,7 +26,9 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
     minPrice: batch?.minPrice ?? '',
     productionCost: batch?.productionCost ?? '',
     notes: batch?.notes ?? '',
+    allowedRoutes: batch?.allowedRoutes ?? [],
   });
+  const toggleRoute = (k) => setForm((f) => ({ ...f, allowedRoutes: f.allowedRoutes.includes(k) ? f.allowedRoutes.filter((x) => x !== k) : [...f.allowedRoutes, k] }));
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const errs = fieldErrors(error);
@@ -54,6 +56,7 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
       body.preferredPrice = Number(form.preferredPrice);
       body.minPrice = Number(form.minPrice);
       body.productionCost = form.productionCost === '' ? null : Number(form.productionCost);
+      body.allowedRoutes = form.allowedRoutes;
     }
     try {
       const saved = batch
@@ -115,6 +118,15 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
           <Field label="Minimum acceptable price ($/kg)" error={errs.minPrice} hint="Never shown to buyers">
             <input className="input" type="number" min="0.01" step="0.01" value={form.minPrice} onChange={set('minPrice')} required disabled={batch && !canEditPrice} />
           </Field>
+          {(!batch || canEditPrice) && (
+            <Field label="Commercial constraints — routes this batch may use" full hint="Leave all unticked to let MarketRoute consider every route (e.g. untick Wholesale to keep a premium batch out of low-price channels).">
+              <div className="row">
+                {ROUTES.map(([k, l]) => (
+                  <label key={k} className="checkbox"><input type="checkbox" checked={form.allowedRoutes.includes(k)} onChange={() => toggleRoute(k)} />{l}</label>
+                ))}
+              </div>
+            </Field>
+          )}
           <Field label="Notes" full>
             <textarea className="input" value={form.notes || ''} onChange={set('notes')} rows={2} />
           </Field>

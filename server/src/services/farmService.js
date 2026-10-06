@@ -6,6 +6,7 @@ import { notFound, conflict, badRequest } from '../utils/errors.js';
 import { REGIONS, COLLECTION_METHODS } from '../config/rules.js';
 import { hashPassword } from './authService.js';
 import { logAudit } from './auditService.js';
+import { fulfilmentCostsFor } from './fulfilmentService.js';
 
 const farmFields = {
   name: z.string().trim().min(2).max(150),
@@ -17,6 +18,13 @@ const farmFields = {
   fulfilmentMethods: z.array(z.enum(COLLECTION_METHODS)).min(1).optional(),
   // Margin Guard: minimum acceptable margin % on sales.
   minMarginPct: z.coerce.number().min(0).max(95).optional(),
+  // Fulfilment cost estimates per method (farm-private), used by MarketRoute and Margin Guard.
+  fulfilmentCosts: z
+    .object(Object.fromEntries(COLLECTION_METHODS.map((m) => [m, z.object({
+      perOrder: z.coerce.number().min(0).max(10000),
+      perKg: z.coerce.number().min(0).max(1000),
+    }).optional()])))
+    .optional(),
 };
 
 const createFarmSchema = z.object({
@@ -37,21 +45,23 @@ const farmUserSchema = z.object({
   phone: z.string().trim().max(40).optional(),
 });
 
+const toFarmDTO = (row) => ({ ...camelize(row), effectiveFulfilmentCosts: fulfilmentCostsFor(row.fulfilment_costs) });
+
 /** Farms visible to the user: all for platform admins, memberships for farm users. */
 export async function listFarmsForUser(user) {
   if (user.role === 'platform_admin') {
     const { rows } = await query('SELECT * FROM farms ORDER BY created_at ASC');
-    return camelizeAll(rows);
+    return rows.map(toFarmDTO);
   }
   if (!user.farmIds.length) return [];
   const { rows } = await query('SELECT * FROM farms WHERE id = ANY($1::int[]) ORDER BY created_at ASC', [user.farmIds]);
-  return camelizeAll(rows);
+  return rows.map(toFarmDTO);
 }
 
 export async function getFarm(farmId) {
   const { rows } = await query('SELECT * FROM farms WHERE id = $1', [farmId]);
   if (!rows[0]) throw notFound('Farm not found');
-  return camelize(rows[0]);
+  return toFarmDTO(rows[0]);
 }
 
 export async function createFarm(user, input) {
@@ -63,7 +73,7 @@ export async function createFarm(user, input) {
       d.contactPhone ?? null, d.fulfilmentMethods || ['FARM_PICKUP']]
   );
   await logAudit({ farmId: rows[0].id, userId: user.id, action: 'FARM_CREATED', entityType: 'farm', entityId: rows[0].id });
-  return camelize(rows[0]);
+  return toFarmDTO(rows[0]);
 }
 
 export async function updateFarm(user, farmId, input) {
@@ -71,13 +81,13 @@ export async function updateFarm(user, farmId, input) {
   const map = {
     name: 'name', description: 'description', region: 'region', address: 'address',
     contactEmail: 'contact_email', contactPhone: 'contact_phone', fulfilmentMethods: 'fulfilment_methods',
-    minMarginPct: 'min_margin_pct',
+    minMarginPct: 'min_margin_pct', fulfilmentCosts: 'fulfilment_costs',
   };
   const sets = [];
   const values = [];
   for (const [key, col] of Object.entries(map)) {
     if (d[key] !== undefined) {
-      values.push(d[key]);
+      values.push(key === 'fulfilmentCosts' ? JSON.stringify(d[key]) : d[key]);
       sets.push(`${col} = $${values.length}`);
     }
   }
@@ -89,7 +99,7 @@ export async function updateFarm(user, farmId, input) {
   );
   if (!rows[0]) throw notFound('Farm not found');
   await logAudit({ farmId, userId: user.id, action: 'FARM_UPDATED', entityType: 'farm', entityId: farmId, details: d });
-  return camelize(rows[0]);
+  return toFarmDTO(rows[0]);
 }
 
 export async function listFarmTeam(farmId) {

@@ -1,6 +1,7 @@
 import { Logo } from '../components/Icons.jsx';
 
-const LOOP = ['Expected harvest', 'Existing demand & coverage', 'HarvestMatch recommendations', 'Farmer approval → orders', 'Demand Recovery & Rescue', 'Analytics'];
+// Proposal v3 core workflow.
+const LOOP = ['Record expected harvest', 'Capture demand & coverage', 'Compare routes with MarketRoute', 'HarvestMatch within the route', 'Farmer approves allocation', 'Demand Recovery & Rescue', 'Insights'];
 
 export default function AuthLayout({ children }) {
   return (
@@ -14,7 +15,7 @@ export default function AuthLayout({ children }) {
               <div style={{ fontSize: 12, color: '#8fa89b' }}>From Harvest to Demand.</div>
             </div>
           </div>
-          <h1>Match what you harvest with the demand that's already there — before produce is at risk.</h1>
+          <h1>Decide where upcoming harvest should go — before it becomes a commercial problem.</h1>
           <div className="loop">
             {LOOP.map((step, i) => (
               <div key={step}>
@@ -25,7 +26,7 @@ export default function AuthLayout({ children }) {
           </div>
         </div>
         <div style={{ fontSize: 12, color: '#7f978a' }}>
-          Local farm demand, market-access and harvest-matching platform. ComCrop-first pilot, built for Singapore's farms.
+          Demand &amp; market access platform for local farms: commercial intelligence, market coordination and demand recovery. Industry-wide opportunity, ComCrop-first validation.
         </div>
       </aside>
       <main className="auth-main">

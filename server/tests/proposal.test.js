@@ -49,13 +49,13 @@ describe('Proposal features — unit rules', () => {
 
   it('Baseline comparison shows change and direction; match conversion has no baseline', () => {
     const rows = buildComparison(
-      [{ metric_key: 'demandCoverage', baseline_value: 40 }, { metric_key: 'atRiskQuantity', baseline_value: 50 }],
-      { demandCoverage: 76.4, atRiskQuantity: 30, matchConversion: 75 }
+      [{ metric_key: 'demandCoverage', baseline_value: 40 }, { metric_key: 'notCommercialised', baseline_value: 50 }],
+      { demandCoverage: 76.4, notCommercialised: 30, matchConversion: 75 }
     );
     const by = Object.fromEntries(rows.map((r) => [r.key, r]));
     assert.equal(by.demandCoverage.change, 36.4);
     assert.equal(by.demandCoverage.direction, 'IMPROVED');
-    assert.equal(by.atRiskQuantity.direction, 'IMPROVED'); // lower is better
+    assert.equal(by.notCommercialised.direction, 'IMPROVED'); // lower is better
     assert.equal(by.matchConversion.baselineStatus, 'N/A before Tyllage');
     assert.equal(by.sellThrough.baselineStatus, 'To establish');
   });
@@ -109,6 +109,20 @@ describe('Proposal features — integration', () => {
     const res = await api().post(`/api/matches/${hotel.id}/approve`).set('Authorization', admin).send({ quantity: 5 });
     assert.equal(res.status, 409);
     assert.equal(res.body.code, 'BELOW_BUYER_MINIMUM');
+  });
+
+  it('FarmPool and DemandPool are Post-MVP: unavailable until the Phase 3 preview is enabled', async () => {
+    const off = await api().get(`/api/demandpool/suggestions?farmId=${I.comcrop}`).set('Authorization', admin);
+    assert.equal(off.status, 409);
+    assert.equal(off.body.code, 'FEATURE_NOT_ENABLED');
+    assert.equal((await api().get(`/api/farmpool?farmId=${I.comcrop}`).set('Authorization', admin)).status, 409);
+    // Recovery does not suggest DemandPool while the preview is off.
+    const rec = (await api().post(`/api/recovery/harvests/${I.naiBai}/start`).set('Authorization', admin).send({})).body.data.recovery;
+    assert.ok(!rec.suggestions.some((x) => x.type === 'DEMAND_POOL'));
+
+    const platform = await login(ACCOUNTS.platformAdmin);
+    await api().patch('/api/admin/policies').set('Authorization', platform).send({ networkFeaturesEnabled: true }).expect(200);
+    assert.equal((await api().get(`/api/demandpool/suggestions?farmId=${I.comcrop}`).set('Authorization', admin)).status, 200);
   });
 
   it('DemandPool combines small requests into one viable order', async () => {
@@ -202,7 +216,7 @@ describe('Proposal features — integration', () => {
     const a = (await api().get(`/api/analytics?farmId=${I.comcrop}`).set('Authorization', admin)).body.data;
     assert.ok(a.metrics.wasteAvoided.redirected >= 4); // 2kg seeded + 2kg now
     assert.ok(a.metrics.averageMarginPerKg.sufficient);
-    assert.ok(a.revenueByChannel.RESTAURANT_NETWORK > 0);
+    assert.ok(a.revenueByRoute.RESTAURANT > 0);
   });
 
   it('Demand Recovery Time is measured once released stock is re-allocated', async () => {
@@ -213,9 +227,9 @@ describe('Proposal features — integration', () => {
     assert.ok(a.metrics.demandRecoveryTime.value > 0);
   });
 
-  it('recovery breaks potential demand down by the proposal channels', async () => {
+  it('recovery breaks potential demand down by MarketRoute route', async () => {
     const rec = (await api().post(`/api/recovery/harvests/${I.kale}/start`).set('Authorization', admin).send({})).body.data.recovery;
-    assert.deepEqual(Object.keys(rec.potentialByChannel).sort(), ['COMMUNITY', 'CONSUMER', 'HOTEL', 'RESTAURANT_NETWORK', 'RETAIL_WHOLESALE']);
+    assert.deepEqual(Object.keys(rec.potentialByRoute).sort(), ['COMMUNITY_D2C', 'INSTITUTIONAL', 'RESTAURANT', 'RETAIL', 'WHOLESALE']);
     assert.ok('potentialFromExistingCustomers' in rec);
     assert.ok('potentialFromSubscribers' in rec);
   });

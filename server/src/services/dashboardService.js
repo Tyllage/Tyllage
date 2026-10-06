@@ -1,5 +1,6 @@
 /**
- * Farm dashboard: What are we harvesting? How much has demand? What may remain unsold? What needs action?
+ * Farm dashboard (Demand Radar): expected harvest against confirmed and potential demand, the strongest
+ * commercial route for each exposed batch, and what needs action.
  */
 import { query } from '../config/db.js';
 import { round2, percent } from '../utils/numbers.js';
@@ -9,6 +10,8 @@ import { listRecoveryCandidates } from './recoveryService.js';
 import { expireListings } from './rescueService.js';
 import { getPolicy } from './policyService.js';
 import { loadOpenDemandForFarm, potentialDemandFor } from './harvestMatchService.js';
+import { assessFarmBatches } from './marketRouteService.js';
+import { ROUTE_LABELS } from '../config/rules.js';
 
 const sum = (arr, key) => round2(arr.reduce((s, x) => s + Number(x[key] || 0), 0));
 
@@ -39,13 +42,39 @@ export async function getDashboard(farmId) {
     listRecoveryCandidates(farmId),
   ]);
 
-  // Demand Radar: open, unconfirmed demand that fits each batch's produce and timing.
+  // Demand Radar: open, unconfirmed demand that fits each batch's produce and timing,
+  // plus MarketRoute's recommended route for whatever is still unallocated.
   const openDemand = await loadOpenDemandForFarm(farmId);
-  const batches = batchRows.map((row) => ({ ...toBatchDTO(row), potentialDemand: potentialDemandFor(row, openDemand) }));
+  const routes = await assessFarmBatches(farmId, batchRows);
+  const batches = batchRows.map((row) => {
+    const a = routes.get(row.id);
+    const top = a?.routes.find((r) => r.key === a.recommendedRoute);
+    return {
+      ...toBatchDTO(row),
+      potentialDemand: potentialDemandFor(row, openDemand),
+      marketRoute: a ? { recommendedRoute: a.recommendedRoute, label: top?.label || null, score: top?.score ?? null, plan: a.plan } : null,
+    };
+  });
   const pendingByBatch = new Map(pendingMatches.rows.map((r) => [r.harvest_batch_id, r.count]));
   const expected = sum(batches, 'harvestQuantity');
   const confirmed = sum(batches, 'confirmedDemand');
   const coverage = percent(confirmed, expected, 1);
+
+  // Proposal §8.1 view: expected harvest vs confirmed demand per produce, across open batches.
+  const byProduce = new Map();
+  for (const b of batches) {
+    const p = byProduce.get(b.produceName) || { produceName: b.produceName, unit: b.unit, expectedHarvest: 0, confirmedDemand: 0, potentialDemand: 0, unallocated: 0, batches: 0 };
+    p.expectedHarvest = round2(p.expectedHarvest + b.harvestQuantity);
+    p.confirmedDemand = round2(p.confirmedDemand + b.confirmedDemand);
+    p.potentialDemand = round2(p.potentialDemand + b.potentialDemand.quantity);
+    p.unallocated = round2(p.unallocated + b.unallocatedQuantity);
+    p.batches += 1;
+    byProduce.set(b.produceName, p);
+  }
+  const radar = [...byProduce.values()].map((p) => {
+    const coverage = percent(p.confirmedDemand, p.expectedHarvest, 1);
+    return { ...p, demandCoverage: coverage, riskLevel: riskLevel(coverage) };
+  });
 
   const kpis = {
     expectedHarvest: expected,
@@ -68,9 +97,10 @@ export async function getDashboard(farmId) {
         message: `${pending} HarvestMatch suggestion(s) awaiting approval for ${c.produceName}`,
       });
     } else if (c.riskLevel === 'HIGH' && !c.lastRecoveryAt) {
+      const rec = routes.get(c.id)?.recommendedRoute;
       actions.push({
-        type: 'RUN_HARVESTMATCH', priority: 1, harvestBatchId: c.id,
-        message: `${c.produceName}: only ${c.demandCoverage ?? 0}% demand coverage, ${c.unallocatedQuantity}${c.unit} unallocated — run HarvestMatch`,
+        type: 'COMPARE_ROUTES', priority: 1, harvestBatchId: c.id,
+        message: `${c.produceName}: only ${c.demandCoverage ?? 0}% demand coverage, ${c.unallocatedQuantity}${c.unit} unallocated — compare routes${rec ? ` (MarketRoute suggests ${ROUTE_LABELS[rec]})` : ''}`,
       });
     } else if (c.triggers.some((t) => t.code === 'BUYER_CANCELLED')) {
       actions.push({
@@ -111,7 +141,8 @@ export async function getDashboard(farmId) {
     kpis,
     // Suggestions on a batch with nothing left to allocate aren't actionable.
     upcomingHarvest: batches.map((b) => ({ ...b, pendingMatches: b.unallocatedQuantity > 0 ? pendingByBatch.get(b.id) || 0 : 0 })),
+    radar,
     actions,
-    rules: { riskThresholds: getPolicy().riskThresholds, atRiskWindowDays: getPolicy().atRiskWindowDays },
+    rules: { riskThresholds: getPolicy().riskThresholds, atRiskWindowDays: getPolicy().atRiskWindowDays, routeWeights: getPolicy().routeWeights },
   };
 }
