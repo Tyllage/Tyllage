@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../services/api.js';
 import { useApi } from '../../hooks/useApi.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { PageHeader, Card, AsyncBoundary, EmptyState } from '../../components/ui.jsx';
+import { PageHeader, Card, AsyncBoundary, EmptyState, Badge } from '../../components/ui.jsx';
 import { StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
 import { kg, date, relativeDay, label } from '../../utils/format.js';
@@ -65,8 +65,15 @@ export default function MyInterests() {
                           <div className="cell-title">{d.produceName}</div>
                           {d.recurrence !== 'NONE' && <div className="cell-sub">Repeats {label(d.recurrence).toLowerCase()}</div>}
                         </td>
-                        <td>{d.farmName || <span className="muted">Any farm</span>}</td>
-                        <td className="num">{kg(d.quantity, d.unit)}</td>
+                        <td>
+                          <div>{d.farmName || <span className="muted">Any farm</span>}</div>
+                          {d.allowPooling && <div className="mt-8"><Badge tone="primary">FarmPool</Badge></div>}
+                          {Number(d.supplyingFarms) > 1 && <div className="cell-sub">Supplied by {Number(d.supplyingFarms)} farms</div>}
+                        </td>
+                        <td className="num">
+                          <div>{kg(d.quantity, d.unit)}</div>
+                          {Number(d.fulfilledQuantity) > 0 && <div className="cell-sub">{kg(d.fulfilledQuantity, d.unit)} fulfilled</div>}
+                        </td>
                         <td>
                           <div>{date(d.requiredDate)}</div>
                           <div className="cell-sub">{relativeDay(d.requiredDate)}</div>

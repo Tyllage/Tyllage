@@ -29,6 +29,18 @@ export default function RescueFormModal({ batches, defaultBatchId, defaultQuanti
   const errs = fieldErrors(error);
   const batch = batches.find((b) => b.id === Number(form.harvestBatchId));
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const [suggestion, setSuggestion] = useState(null);
+
+  // Pricing support: transparent rule-based suggestion within farm and platform constraints.
+  const suggest = async () => {
+    try {
+      const s = await api.get('/rescue/price-suggestion', { harvestBatchId: form.harvestBatchId });
+      setSuggestion(s);
+      setForm((f) => ({ ...f, rescuePrice: s.suggestedPrice.toFixed(2) }));
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -82,8 +94,17 @@ export default function RescueFormModal({ batches, defaultBatchId, defaultQuanti
             <input className="input" type="number" min="0.1" step="0.1" max={batch?.unallocatedQuantity} value={form.quantity} onChange={set('quantity')} required />
           </Field>
           <Field label="Rescue price ($/kg)" error={errs.rescuePrice} hint={batch ? `Original ${money(batch.preferredPrice)}/kg` : undefined}>
-            <input className="input" type="number" min="0.01" step="0.01" max={batch?.preferredPrice} value={form.rescuePrice} onChange={set('rescuePrice')} required />
+            <div className="row" style={{ flexWrap: 'nowrap' }}>
+              <input className="input" type="number" min="0.01" step="0.01" max={batch?.preferredPrice} value={form.rescuePrice} onChange={set('rescuePrice')} required />
+              <button type="button" className="btn btn-sm" onClick={suggest} title="Rule-based pricing support">Suggest</button>
+            </div>
           </Field>
+          {suggestion && (
+            <div className="full notice notice-info" style={{ gridColumn: '1 / -1', flexDirection: 'column', gap: 4 }}>
+              <div className="strong">Suggested {money(suggestion.suggestedPrice)}/kg (rule-based, floor {money(suggestion.floorPrice)})</div>
+              {suggestion.rationale.map((r) => <div key={r} className="small">• {r}</div>)}
+            </div>
+          )}
           <Field label="Reason">
             <select className="input" value={form.reason} onChange={set('reason')}>
               {REASONS.map((r) => <option key={r} value={r}>{label(r)}</option>)}

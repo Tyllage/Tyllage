@@ -17,13 +17,16 @@ function FarmProfile({ farm, canEdit, onSaved }) {
   const [form, setForm] = useState({
     name: farm.name, description: farm.description || '', region: farm.region || '', address: farm.address || '',
     contactEmail: farm.contactEmail || '', contactPhone: farm.contactPhone || '', fulfilmentMethods: farm.fulfilmentMethods,
+    minMarginPct: farm.minMarginPct ?? 15,
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const toggleMethod = (m) => setForm((f) => ({ ...f, fulfilmentMethods: f.fulfilmentMethods.includes(m) ? f.fulfilmentMethods.filter((x) => x !== m) : [...f.fulfilmentMethods, m] }));
   const submit = async (e) => {
     e.preventDefault();
     try {
-      await api.patch(`/farms/${farm.id}`, { ...form, region: form.region || null, contactEmail: form.contactEmail || null, contactPhone: form.contactPhone || null });
+      await api.patch(`/farms/${farm.id}`, {
+        ...form, region: form.region || null, contactEmail: form.contactEmail || null, contactPhone: form.contactPhone || null, minMarginPct: Number(form.minMarginPct),
+      });
       toast('Farm profile saved');
       onSaved();
     } catch (err) {
@@ -41,6 +44,9 @@ function FarmProfile({ farm, canEdit, onSaved }) {
             <Field label="Address"><input className="input" value={form.address} onChange={set('address')} /></Field>
             <Field label="Contact email"><input className="input" type="email" value={form.contactEmail} onChange={set('contactEmail')} /></Field>
             <Field label="Contact phone"><input className="input" value={form.contactPhone} onChange={set('contactPhone')} /></Field>
+            <Field label="Minimum margin (%) — Margin Guard" hint="Warns when a sale's margin falls below this. Private to your farm." full>
+              <input className="input" type="number" min="0" max="95" step="0.5" value={form.minMarginPct} onChange={set('minMarginPct')} />
+            </Field>
           </div>
           <Field label="Fulfilment methods offered">
             <div className="row">
@@ -58,13 +64,19 @@ function FarmProfile({ farm, canEdit, onSaved }) {
 
 function ProduceModal({ farmId, item, onClose, onSaved }) {
   const toast = useToast();
-  const [form, setForm] = useState({ name: item?.name || '', category: item?.category || 'LEAFY_GREENS', unit: item?.unit || 'kg', defaultPrice: item?.defaultPrice ?? '', isActive: item?.isActive ?? true });
+  const [form, setForm] = useState({
+    name: item?.name || '', category: item?.category || 'LEAFY_GREENS', unit: item?.unit || 'kg', defaultPrice: item?.defaultPrice ?? '',
+    isActive: item?.isActive ?? true, minOrderQuantity: item?.minOrderQuantity ?? 0, shelfLifeDays: item?.shelfLifeDays ?? '',
+  });
   const [error, setError] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const submit = async (e) => {
     e.preventDefault();
     try {
-      const body = { ...form, defaultPrice: Number(form.defaultPrice) };
+      const body = {
+        ...form, defaultPrice: Number(form.defaultPrice), minOrderQuantity: Number(form.minOrderQuantity || 0),
+        shelfLifeDays: form.shelfLifeDays === '' ? null : Number(form.shelfLifeDays),
+      };
       if (item) await api.patch(`/produce/${item.id}`, body);
       else await api.post('/produce', { ...body, farmId });
       toast(item ? 'Produce updated' : 'Produce added');
@@ -83,6 +95,12 @@ function ProduceModal({ farmId, item, onClose, onSaved }) {
           <Field label="Unit"><input className="input" value={form.unit} onChange={set('unit')} required /></Field>
           <Field label="Default selling price ($)"><input className="input" type="number" min="0" step="0.01" value={form.defaultPrice} onChange={set('defaultPrice')} required /></Field>
           <Field label="Status"><label className="checkbox"><input type="checkbox" checked={form.isActive} onChange={set('isActive')} />Active</label></Field>
+          <Field label="Minimum order quantity" hint="Smaller requests can still be served via DemandPool">
+            <input className="input" type="number" min="0" step="0.5" value={form.minOrderQuantity} onChange={set('minOrderQuantity')} />
+          </Field>
+          <Field label="Shelf life (days)" hint="Drives Dynamic Routing; blank = platform default">
+            <input className="input" type="number" min="1" max="60" value={form.shelfLifeDays} onChange={set('shelfLifeDays')} />
+          </Field>
         </div>
       </form>
     </Modal>
@@ -98,7 +116,7 @@ function ProduceCatalogue({ farmId, canEdit }) {
         {(rows) => rows.length === 0 ? <EmptyState title="No produce yet" /> : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Name</th><th>Category</th><th>Unit</th><th className="num">Default price</th><th>Status</th><th /></tr></thead>
+              <thead><tr><th>Name</th><th>Category</th><th>Unit</th><th className="num">Default price</th><th className="num">Min order</th><th className="num">Shelf life</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {rows.map((p) => (
                   <tr key={p.id}>
@@ -106,6 +124,8 @@ function ProduceCatalogue({ farmId, canEdit }) {
                     <td>{label(p.category)}</td>
                     <td>{p.unit}</td>
                     <td className="num">{money(p.defaultPrice)}</td>
+                    <td className="num">{p.minOrderQuantity > 0 ? `${p.minOrderQuantity}${p.unit}` : '—'}</td>
+                    <td className="num">{p.shelfLifeDays ? `${p.shelfLifeDays} days` : <span className="muted">Default</span>}</td>
                     <td>{p.isActive ? <Badge tone="low">Active</Badge> : <Badge>Inactive</Badge>}</td>
                     <td>{canEdit && <button className="btn btn-sm btn-ghost" onClick={() => setEditing(p)}>Edit</button>}</td>
                   </tr>

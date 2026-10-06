@@ -8,6 +8,7 @@ import { AsyncBoundary, Badge, Card, EmptyState, Field, Modal, Notice, PageHeade
 import { StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
 import { dateTime, kg, label } from '../../utils/format.js';
+import AiPanel from '../../components/AiPanel.jsx';
 
 const TYPES = ['RESCUE_ALERT', 'B2B_AVAILABILITY', 'HARVEST_ANNOUNCEMENT', 'DEMAND_RECOVERY', 'COMMUNITY_DROP', 'CUSTOMER_RECOMMENDATION'];
 const AUDIENCES = ['ALL_BUYERS', 'BUSINESS_BUYERS', 'CONSUMERS', 'COMMUNITY'];
@@ -106,6 +107,17 @@ function CampaignEditor({ id, onClose, onChanged }) {
   const send = () => window.confirm(`Send to ${c.recipientsPreview} opted-in recipient(s) via WhatsApp?`) &&
     call(() => api.post(`/campaigns/${id}/send`), (r) => `Sent: ${Object.entries(r.delivery).map(([k, v]) => `${v} ${label(k).toLowerCase()}`).join(', ') || 'no recipients'}`);
   const cancel = () => window.confirm('Cancel this campaign?') && call(() => api.post(`/campaigns/${id}/cancel`), () => 'Campaign cancelled');
+  const [variations, setVariations] = useState(null);
+  const loadVariations = async () => {
+    setBusy(true);
+    try {
+      setVariations(await api.post(`/campaigns/${id}/variations`));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Modal title={c ? c.title : 'Campaign'} onClose={onClose} wide
@@ -131,6 +143,25 @@ function CampaignEditor({ id, onClose, onChanged }) {
             <Field label={c.status === 'DRAFT' ? 'Message (review and edit before approving)' : 'Message'}>
               <textarea className="input" rows={9} value={text} onChange={(e) => setContent(e.target.value)} disabled={c.status !== 'DRAFT'} />
             </Field>
+            {c.status === 'DRAFT' && (
+              <div>
+                <button className="btn btn-sm" onClick={loadVariations} disabled={busy}><Icons.Sparkle />Generate variations</button>
+                {variations && (
+                  <div className="stack mt-8">
+                    <AiPanel result={{ ...variations, output: `${variations.variations.length} variations generated — pick one to use as the draft.` }} title="Campaign variations" onClose={() => setVariations(null)} />
+                    <div className="grid grid-3">
+                      {variations.variations.map((v) => (
+                        <div key={v.tone} className="card" style={{ padding: 12 }}>
+                          <div className="row-between"><span className="strong small">{v.tone}</span>
+                            <button className="btn btn-sm" onClick={() => setContent(v.text)}>Use this</button></div>
+                          <div className="small mt-8" style={{ whiteSpace: 'pre-wrap' }}>{v.text}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <details>
               <summary className="small muted" style={{ cursor: 'pointer' }}>Approved business context sent to the copywriter</summary>
               <pre className="mono" style={{ background: 'var(--surface-2)', padding: 12, borderRadius: 6, overflowX: 'auto' }}>{JSON.stringify(c.context, null, 2)}</pre>

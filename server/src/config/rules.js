@@ -45,9 +45,39 @@ export const ADJACENT_REGIONS = {
   WEST: ['CENTRAL', 'NORTH'],
 };
 
-/** Groups buyer types into the channels shown in Demand Recovery. */
+// Rescue guard-rails.
+export const RESCUE_MAX_DEADLINE_DAYS = 14;
+export const RESCUE_MAX_DISCOUNT_PCT = 70;
+
+// Dynamic Perishable Inventory Routing: stages as a % of the produce's shelf life since harvest.
+export const DEFAULT_SHELF_LIFE_DAYS = 7;
+export const ROUTING_STAGES = [
+  { key: 'PREMIUM', label: 'Premium sale — B2B & direct', upToPct: 30 },
+  { key: 'COMMUNITY', label: 'Community promotion', upToPct: 55 },
+  { key: 'RESCUE', label: 'Rescue pricing', upToPct: 80 },
+  { key: 'CLEARANCE', label: 'B2B clearance', upToPct: 100 },
+  { key: 'DONATION', label: 'Donation / alternative use', upToPct: null },
+];
+
+// DemandPool: smallest combined quantity worth fulfilling as one pooled farm order.
+export const DEMANDPOOL_MIN_VIABLE_KG = 5;
+
+// Demand Recovery / analytics channels (matches the proposal's recovery allocation table).
+export const CHANNELS = {
+  RESTAURANT_NETWORK: 'Restaurant network',
+  HOTEL: 'Hotel buyers',
+  RETAIL_WHOLESALE: 'Retail & wholesale',
+  COMMUNITY: 'Community / Community Drops',
+  CONSUMER: 'Consumers',
+};
+
+/** Groups buyer types into channels. */
 export function buyerChannel(buyerType) {
-  if (buyerType === 'CONSUMER') return 'CONSUMER';
+  if (['RESTAURANT', 'CAFE', 'CATERER'].includes(buyerType)) return 'RESTAURANT_NETWORK';
+  if (buyerType === 'HOTEL') return 'HOTEL';
+  if (['RETAILER', 'WHOLESALER'].includes(buyerType)) return 'RETAIL_WHOLESALE';
   if (buyerType === 'COMMUNITY') return 'COMMUNITY';
-  return 'BUSINESS';
+  return 'CONSUMER';
 }
+
+export const emptyChannelTotals = () => Object.fromEntries(Object.keys(CHANNELS).map((k) => [k, 0]));

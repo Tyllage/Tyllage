@@ -281,6 +281,15 @@ All responses use `{ "success": true, "data": … }` or `{ "success": false, "me
 | `/api/community-drops` | `GET /upcoming` · `GET ?farmId` · `POST` · `PATCH /:id/status` · `POST /:id/join` |
 | `/api/marketplace` | `GET /supply` · `GET /farms` (public; never exposes minimum prices) |
 | `/api/users` | `GET` · `PATCH /:id/active` (platform admin) |
+| `/api/farmpool` | `GET ?farmId` · `POST /:demandId/contribute` |
+| `/api/demandpool` | `GET ?farmId` · `GET /suggestions?farmId` · `POST` |
+| `/api/orders` (new) | `POST` direct/bulk order (buyers) · `POST /:id/disputes` |
+| `/api/disputes` | `GET` (own/farm/all) · `PATCH /:id` (platform admin resolves) |
+| `/api/harvests/:id/dispositions` | `GET` · `POST` (donation / alternative use / waste) |
+| `/api/analytics` (new) | `GET /comparison?farmId` · `PUT /baselines` |
+| `/api/ai` | `GET /status` · `POST /matches/:id/explain` · `POST /insights` · plus `POST /api/campaigns/:id/variations`, `GET /api/rescue/price-suggestion` |
+| `/api/admin` | `GET/PATCH /policies` · `GET /audit-logs` (platform admin) |
+| `/api/marketplace/farms/:id` | Public farm profile |
 | misc | `GET /api/health` · `GET/PATCH /api/buyers/me` · `GET /api/notifications` · `POST /api/notifications/:id/read` · `GET/POST /api/whatsapp/webhook` |
 
 ### Roles
@@ -292,6 +301,28 @@ All responses use `{ "success": true, "data": … }` or `{ "success": false, "me
 | `farm_staff` | Create and update harvests (not prices), fulfil orders (confirm, ready, complete), view farm data. No approvals, cancellations, pricing or campaigns |
 | `business_buyer` | Register demand, view supply, matches and own orders, cancel own pending/confirmed orders |
 | `consumer` | Browse supply and Rescue, register interests, reserve Rescue, join Community Drops, own orders |
+
+## Proposal feature coverage
+
+Everything described in both proposal documents (`Tyllage_Final`, `Tyllage_Proposal`) is in the prototype, except the business model and the Phase 2–4 roadmap:
+
+| Proposal item | Where in the prototype |
+|---|---|
+| Demand Radar (expected / confirmed / **potential** demand / risk) | Farm **Overview** — Potential Demand = open, unconfirmed demand whose produce and timing fit each batch |
+| HarvestMatch incl. **minimum order quantity**, previous purchases, shelf life | Farm minimum order per produce (Settings → Produce) and buyer minimum delivery (`minQuantity`) are enforced in scoring and on approval |
+| Proposal lens: margin, urgency, purchase likelihood | Shown on every match as decision-support chips. The official score stays the Final document's additive formula |
+| Demand Recovery channels (restaurant network, hotel, existing customers, community, consumers, Rescue) | Recovery panel: five channels plus the existing-customer and subscriber split; DemandPool and donation suggestions |
+| Rescue segments incl. **Chef Pack** | Harvest grade `CHEF_PACK` |
+| **Margin Guard** | Farm-private production cost per batch and minimum margin per farm. Shown on batches, on matches and in the Rescue price check |
+| **Dynamic Perishable Inventory Routing** | Shelf life per crop gives stages Premium → Community → Rescue → Clearance → Donation. Routing card on each batch, dashboard alerts, donation / alternative-use / waste records |
+| **FarmPool** (many farms → one buyer) | Network → FarmPool. Buyers opt in with "Allow FarmPool"; each farm commits from its own batch; partner farms are anonymised |
+| **DemandPool** (many buyers → one viable order) | Network → DemandPool. Small requests below the farm minimum are pooled atomically, optionally through a Community Drop |
+| Bulk orders (business buyers) and purchases (consumers) | Available Supply cart (multi-line) and Buy on Available Now / Growing Soon. Orders start PENDING until the farm confirms |
+| Farm Profiles | Marketplace → Farms (`/market/farms`) |
+| Platform admin: policies, disputes, security | Admin → Policies (live-editable business rules), Disputes, Audit log (including sign-in events) |
+| KPIs: **Demand Recovery Time**, **Waste Avoided**, **Average Margin per kg** | Analytics. Each shows "Not enough data yet" until real records exist |
+| Pilot success framework (baseline vs pilot vs change) | Analytics → Pilot success framework. Baselines are entered by the farm, never invented |
+| AI: explanations, demand-insight summaries, campaign variations, pricing support | "Explain with AI", the AI demand insights card and campaign variations. **Simulated without an OpenAI key**: the UI labels the output "Simulated" and shows the exact prompt that would be sent. Pricing support is rule-based and labelled as such |
 
 ## HTTP status codes
 
@@ -320,7 +351,7 @@ The catalog lives in `client/src/utils/httpStatus.js` and the page in `client/sr
 npm test
 ```
 
-This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and re-seeded per test file. The 78 tests cover:
+This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and re-seeded per test file. The 98 tests cover:
 
 - authentication and incorrect credentials
 - RBAC and farm access isolation, including spoofed `farmId`
@@ -335,6 +366,7 @@ This requires `TEST_DATABASE_URL`, a **disposable** database that is dropped and
 - the campaign approve-before-send workflow in mock mode
 - the health endpoint
 - HTTP 400/413/415 handling
+- proposal features: Dynamic Routing, Margin Guard, minimum order quantities, DemandPool, FarmPool (with partner anonymity), bulk orders, dispositions, the new KPIs, baselines, disputes, platform policies and the AI simulation
 
 ## Railway deployment
 

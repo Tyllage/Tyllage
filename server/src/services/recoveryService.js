@@ -60,7 +60,7 @@ export async function listRecoveryCandidates(farmId) {
 }
 
 /** Turns a recovery run summary into explicit, approval-required suggestions. */
-export function buildRecoverySuggestions(summary, unit = 'kg') {
+export function buildRecoverySuggestions(summary, unit = 'kg', { routingStage } = {}) {
   const suggestions = [];
   if (summary.potentialStrongTotal > 0) {
     suggestions.push({
@@ -69,8 +69,23 @@ export function buildRecoverySuggestions(summary, unit = 'kg') {
       message: `Review and approve recovery matches for ${summary.potentialStrongTotal}${unit}`,
     });
   }
-  const remainder = round2(summary.remainingAfterStrong);
-  if (remainder > 0) {
+  let remainder = round2(summary.remainingAfterStrong);
+  if (remainder > 0 && summary.demandPoolQuantity > 0) {
+    const qty = round2(Math.min(remainder, summary.demandPoolQuantity));
+    suggestions.push({
+      type: 'DEMAND_POOL',
+      quantity: qty,
+      message: `${summary.demandPoolRequests} small request(s) below your minimum order could be served together via DemandPool (${qty}${unit})`,
+    });
+    remainder = round2(remainder - qty);
+  }
+  if (remainder > 0 && routingStage === 'DONATION') {
+    suggestions.push({
+      type: 'RECORD_DISPOSITION',
+      quantity: remainder,
+      message: `Past its sales window. Donate or put ${remainder}${unit} to alternative use, and record it`,
+    });
+  } else if (remainder > 0) {
     suggestions.push({
       type: 'MOVE_TO_RESCUE',
       quantity: remainder,
@@ -88,7 +103,7 @@ export function buildRecoverySuggestions(summary, unit = 'kg') {
 
 export async function startRecovery(user, batchId, { trigger } = {}, ip) {
   const result = await runMatching(user, batchId, { runType: 'RECOVERY', trigger: trigger || 'MANUAL', ip });
-  const suggestions = buildRecoverySuggestions(result.run.summary, result.batch.unit);
+  const suggestions = buildRecoverySuggestions(result.run.summary, result.batch.unit, { routingStage: result.batch.routing?.stage });
   await query(`UPDATE match_runs SET summary = summary || $1::jsonb WHERE id = $2`, [
     JSON.stringify({ suggestions }),
     result.run.id,

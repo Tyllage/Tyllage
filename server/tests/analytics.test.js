@@ -73,11 +73,13 @@ describe('Farm analytics endpoint (integration)', () => {
   });
 
   it('a farm with no activity reports "not enough data" rather than invented numbers', async () => {
-    const farmB = await login(ACCOUNTS.farmBAdmin);
-    const res = await api().get(`/api/analytics?farmId=${I.farmB}`).set('Authorization', farmB);
+    // A freshly onboarded farm has no records at all.
+    const admin = await login(ACCOUNTS.platformAdmin);
+    const farm = await api().post('/api/farms').set('Authorization', admin).send({ name: 'Farm C (Test)', slug: 'farm-c-test' });
+    const res = await api().get(`/api/analytics?farmId=${farm.body.data.id}`).set('Authorization', admin);
     const { metrics, weeklyRevenue, totals } = res.body.data;
     assert.equal(totals.revenue, 0);
-    for (const key of ['sellThrough', 'rescueRate', 'channelConcentration', 'repeatBuyerRate', 'matchConversion']) {
+    for (const key of ['sellThrough', 'rescueRate', 'channelConcentration', 'repeatBuyerRate', 'matchConversion', 'demandRecoveryTime', 'wasteAvoided', 'averageMarginPerKg']) {
       assert.equal(metrics[key].sufficient, false, key);
       assert.equal(metrics[key].value, null, key);
     }

@@ -2,13 +2,17 @@ import { z } from 'zod';
 import { withTransaction } from '../config/db.js';
 import { validate } from '../utils/validate.js';
 import { notFound, badRequest, conflict } from '../utils/errors.js';
+import { query } from '../config/db.js';
+import { camelizeAll } from '../utils/case.js';
 import { round2 } from '../utils/numbers.js';
 import { assertFarmAccess, assertFarmAdmin } from './farmAccessService.js';
 import { assertProduceBelongsToFarm } from './produceService.js';
 import { logAudit } from './auditService.js';
 import { findBatchById, listBatches, lockBatch, syncBatchStatus, toBatchDTO } from '../models/harvestModel.js';
 
-export const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE'];
+export const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE', 'CHEF_PACK'];
+export const DISPOSITION_TYPES = ['DONATION', 'ALTERNATIVE_USE', 'WASTE'];
+const cost = z.coerce.number().min(0).max(100000);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be a date (YYYY-MM-DD)');
 const positiveQty = z.coerce.number().positive('must be greater than 0').max(1000000);
 const price = z.coerce.number().positive('must be greater than 0').max(100000);
@@ -22,6 +26,7 @@ const createSchema = z
     grade: z.enum(GRADES).default('EVERYDAY'),
     preferredPrice: price,
     minPrice: price,
+    productionCost: cost.nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
   })
   .refine((d) => d.minPrice <= d.preferredPrice, {
@@ -37,9 +42,17 @@ const updateSchema = z.object({
   grade: z.enum(GRADES).optional(),
   preferredPrice: price.optional(),
   minPrice: price.optional(),
+  productionCost: cost.nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
-const PRICE_FIELDS = ['preferredPrice', 'minPrice'];
+const PRICE_FIELDS = ['preferredPrice', 'minPrice', 'productionCost'];
+
+const dispositionSchema = z.object({
+  dispositionType: z.enum(DISPOSITION_TYPES),
+  quantity: positiveQty,
+  recipient: z.string().trim().max(150).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
 
 async function loadBatchForUser(user, id) {
   const row = await findBatchById(id);
@@ -64,10 +77,10 @@ export async function createHarvest(user, farmId, input, ip) {
     await assertProduceBelongsToFarm(d.produceId, farmId, client);
     const { rows } = await client.query(
       `INSERT INTO harvest_batches (farm_id, produce_id, expected_quantity, actual_quantity, harvest_date, grade,
-                                    preferred_price, min_price, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                                    preferred_price, min_price, production_cost, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [farmId, d.produceId, d.expectedQuantity, d.actualQuantity ?? null, d.harvestDate, d.grade,
-        d.preferredPrice, d.minPrice, d.notes ?? null, user.id]
+        d.preferredPrice, d.minPrice, d.productionCost ?? null, d.notes ?? null, user.id]
     );
     const id = rows[0].id;
     await logAudit({ farmId, userId: user.id, action: 'HARVEST_CREATED', entityType: 'harvest_batch', entityId: id, details: d, ip }, client);
@@ -93,13 +106,14 @@ export async function updateHarvest(user, id, input, ip) {
       grade: d.grade ?? row.grade,
       preferred_price: d.preferredPrice ?? row.preferred_price,
       min_price: d.minPrice ?? row.min_price,
+      production_cost: d.productionCost !== undefined ? d.productionCost : row.production_cost,
       notes: d.notes !== undefined ? d.notes : row.notes,
     };
     if (merged.min_price > merged.preferred_price) {
       throw badRequest('Minimum price cannot exceed preferred price', 'VALIDATION_ERROR');
     }
     // Quantity can't drop below what is already committed to buyers or Rescue.
-    const committed = round2(Number(row.allocated_quantity) + Number(row.rescue_quantity));
+    const committed = round2(Number(row.allocated_quantity) + Number(row.rescue_quantity) + Number(row.disposed_quantity || 0));
     const newHarvestQty = merged.actual_quantity ?? merged.expected_quantity;
     if (newHarvestQty < committed) {
       throw conflict(
@@ -111,10 +125,10 @@ export async function updateHarvest(user, id, input, ip) {
     await client.query(
       `UPDATE harvest_batches
           SET expected_quantity = $1, actual_quantity = $2, harvest_date = $3, grade = $4,
-              preferred_price = $5, min_price = $6, notes = $7, updated_at = NOW()
-        WHERE id = $8`,
+              preferred_price = $5, min_price = $6, notes = $7, production_cost = $8, updated_at = NOW()
+        WHERE id = $9`,
       [merged.expected_quantity, merged.actual_quantity, merged.harvest_date, merged.grade,
-        merged.preferred_price, merged.min_price, merged.notes, id]
+        merged.preferred_price, merged.min_price, merged.notes, merged.production_cost, id]
     );
     await logAudit({ farmId: row.farm_id, userId: user.id, action: 'HARVEST_UPDATED', entityType: 'harvest_batch', entityId: id, details: d, ip }, client);
     return toBatchDTO(await syncBatchStatus(id, client));
@@ -148,4 +162,38 @@ export async function closeHarvest(user, id, ip) {
     await logAudit({ farmId: row.farm_id, userId: user.id, action: 'HARVEST_CLOSED', entityType: 'harvest_batch', entityId: id, ip }, client);
     return toBatchDTO(await findBatchById(id, client));
   });
+}
+
+/**
+ * Final routing stage: record produce donated, put to alternative use, or (honestly) wasted.
+ * Removes the quantity from unallocated stock.
+ */
+export async function recordDisposition(user, id, input, ip) {
+  const d = validate(dispositionSchema, input);
+  return withTransaction(async (client) => {
+    const row = await lockBatch(id, client);
+    if (!row) throw notFound('Harvest batch not found');
+    assertFarmAdmin(user, row.farm_id);
+    if (row.status === 'CLOSED') throw conflict('Closed batches cannot be changed', 'BATCH_CLOSED');
+    if (d.quantity > Number(row.remaining_quantity)) {
+      throw conflict(`Only ${Math.max(0, row.remaining_quantity)}${row.unit} is unallocated`, 'OVER_ALLOCATION');
+    }
+    const { rows } = await client.query(
+      `INSERT INTO batch_dispositions (farm_id, harvest_batch_id, disposition_type, quantity, recipient, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [row.farm_id, id, d.dispositionType, d.quantity, d.recipient ?? null, d.notes ?? null, user.id]
+    );
+    await logAudit({ farmId: row.farm_id, userId: user.id, action: 'DISPOSITION_RECORDED', entityType: 'harvest_batch', entityId: id, details: { ...d, dispositionId: rows[0].id }, ip }, client);
+    return toBatchDTO(await syncBatchStatus(id, client));
+  });
+}
+
+export async function listDispositions(user, id) {
+  await loadBatchForUser(user, id);
+  const { rows } = await query(
+    `SELECT d.*, u.full_name AS created_by_name FROM batch_dispositions d LEFT JOIN users u ON u.id = d.created_by
+      WHERE d.harvest_batch_id = $1 ORDER BY d.created_at DESC`,
+    [id]
+  );
+  return camelizeAll(rows);
 }

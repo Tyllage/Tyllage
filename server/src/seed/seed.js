@@ -43,6 +43,7 @@ const BUYERS = {
 };
 
 const TABLES = [
+  'pilot_baselines', 'platform_policies', 'order_disputes', 'demand_pool_members', 'demand_pools', 'batch_dispositions',
   'audit_logs', 'notifications', 'campaigns', 'allocations', 'harvest_matches', 'match_runs', 'order_items', 'orders',
   'rescue_listings', 'community_drops', 'demand_requests', 'buyer_profiles', 'harvest_batches', 'produce', 'farm_staff', 'farms', 'users',
 ];
@@ -134,17 +135,21 @@ export async function seed({ log = console.log } = {}) {
     }
 
     // ---------------------------------------------------------------- produce (demo prices)
+    // [name, category, default price, farm minimum order (kg), shelf life (days)] — demo values.
     const P = {};
-    for (const [name, category, price] of [
-      ['Sweet Basil', 'HERBS', 28],
-      ['Mint', 'HERBS', 26],
-      ['Kale', 'LEAFY_GREENS', 14],
-      ['Nai Bai', 'LEAFY_GREENS', 8],
-      ['Lettuce', 'LEAFY_GREENS', 10],
+    for (const [name, category, price, moq, shelf] of [
+      ['Sweet Basil', 'HERBS', 28, 1, 6],
+      ['Mint', 'HERBS', 26, 1, 6],
+      ['Kale', 'LEAFY_GREENS', 14, 2, 7],
+      ['Nai Bai', 'LEAFY_GREENS', 8, 5, 5],
+      ['Lettuce', 'LEAFY_GREENS', 10, 2, 6],
     ]) {
-      P[name] = await insert(client, 'produce', { farm_id: comcrop.id, name, category, unit: 'kg', default_price: price });
+      P[name] = await insert(client, 'produce', {
+        farm_id: comcrop.id, name, category, unit: 'kg', default_price: price, min_order_quantity: moq, shelf_life_days: shelf,
+      });
     }
     const pakChoi = await insert(client, 'produce', { farm_id: farmB.id, name: 'Pak Choi', category: 'LEAFY_GREENS', unit: 'kg', default_price: 9 });
+    const farmBLettuce = await insert(client, 'produce', { farm_id: farmB.id, name: 'Lettuce', category: 'LEAFY_GREENS', unit: 'kg', default_price: 9.5, min_order_quantity: 2 });
 
     const batch = (produce, d) =>
       insert(client, 'harvest_batches', {
@@ -152,9 +157,10 @@ export async function seed({ log = console.log } = {}) {
       });
 
     // ---------------------------------------------------------------- historical (closed) batches → order history
-    const hKale = await batch(P.Kale, { expected_quantity: 60, actual_quantity: 60, harvest_date: addDays(T, -14), preferred_price: 14, min_price: 10, status: 'CLOSED', marked_available: true });
-    const hBasil = await batch(P['Sweet Basil'], { expected_quantity: 25, actual_quantity: 25, harvest_date: addDays(T, -10), preferred_price: 28, min_price: 22, status: 'CLOSED', marked_available: true });
-    const hNaiBai = await batch(P['Nai Bai'], { expected_quantity: 50, actual_quantity: 50, harvest_date: addDays(T, -7), preferred_price: 8, min_price: 6, status: 'CLOSED', marked_available: true });
+    // production_cost = demo cost per kg (farm-private; feeds Margin Guard and Average Margin per kg).
+    const hKale = await batch(P.Kale, { expected_quantity: 60, actual_quantity: 60, harvest_date: addDays(T, -14), preferred_price: 14, min_price: 10, production_cost: 7, status: 'CLOSED', marked_available: true });
+    const hBasil = await batch(P['Sweet Basil'], { expected_quantity: 25, actual_quantity: 25, harvest_date: addDays(T, -10), preferred_price: 28, min_price: 22, production_cost: 15, status: 'CLOSED', marked_available: true });
+    const hNaiBai = await batch(P['Nai Bai'], { expected_quantity: 50, actual_quantity: 50, harvest_date: addDays(T, -7), preferred_price: 8, min_price: 6, production_cost: 4, status: 'CLOSED', marked_available: true });
 
     const hist = [
       [hKale, 'restaurantA', 15, 14, 'COMPLETED'], [hKale, 'hotelB', 20, 13, 'COMPLETED'], [hKale, 'cafeD', 10, 14, 'COMPLETED'], [hKale, 'retailerF', 10, 12, 'COMPLETED'],
@@ -167,17 +173,18 @@ export async function seed({ log = console.log } = {}) {
 
     // ---------------------------------------------------------------- current batches
     // Kale: HIGH risk (24/70 = 34%), harvested today — the core demo batch.
-    const kale = await batch(P.Kale, { expected_quantity: 70, actual_quantity: 70, harvest_date: T, preferred_price: 14, min_price: 10, marked_available: true });
+    const kale = await batch(P.Kale, { expected_quantity: 70, actual_quantity: 70, harvest_date: T, preferred_price: 14, min_price: 10, production_cost: 7, marked_available: true });
     // Sweet Basil: well covered (26/30 = 87%, LOW).
-    const basil = await batch(P['Sweet Basil'], { expected_quantity: 30, harvest_date: addDays(T, 2), preferred_price: 28, min_price: 22, grade: 'PREMIUM' });
+    const basil = await batch(P['Sweet Basil'], { expected_quantity: 30, harvest_date: addDays(T, 2), preferred_price: 28, min_price: 22, production_cost: 15, grade: 'PREMIUM' });
     // Nai Bai: MEDIUM (33/60 = 55%).
-    const naiBai = await batch(P['Nai Bai'], { expected_quantity: 60, harvest_date: addDays(T, 3), preferred_price: 8, min_price: 6 });
+    const naiBai = await batch(P['Nai Bai'], { expected_quantity: 60, harvest_date: addDays(T, 3), preferred_price: 8, min_price: 6, production_cost: 4 });
     // Mint: MEDIUM (10/20 = 50%).
-    const mint = await batch(P.Mint, { expected_quantity: 20, harvest_date: addDays(T, 5), preferred_price: 26, min_price: 20 });
-    // Lettuce: LOW (34/40 = 85%), growing.
-    const lettuce = await batch(P.Lettuce, { expected_quantity: 40, harvest_date: addDays(T, 7), preferred_price: 10, min_price: 7 });
+    const mint = await batch(P.Mint, { expected_quantity: 20, harvest_date: addDays(T, 5), preferred_price: 26, min_price: 20, production_cost: 14 });
+    // Lettuce: MEDIUM (34/55 = 62%) — can contribute to the FarmPool request below.
+    const lettuce = await batch(P.Lettuce, { expected_quantity: 55, harvest_date: addDays(T, 7), preferred_price: 10, min_price: 7, production_cost: 5 });
     // Farm B (multi-farm demo).
     await batch(pakChoi, { expected_quantity: 25, harvest_date: addDays(T, 4), preferred_price: 9, min_price: 7 });
+    const farmBLettuceBatch = await batch(farmBLettuce, { expected_quantity: 40, harvest_date: addDays(T, 6), preferred_price: 9.5, min_price: 7, created_by: users['farmb@tyllage.demo'].id });
 
     const recent = ts(addDays(T, -3));
     const current = [
@@ -208,7 +215,7 @@ export async function seed({ log = console.log } = {}) {
       insert(client, 'demand_requests', { buyer_id: buyers[key].id, unit: 'kg', created_by: buyers[key].user_id ?? farmAdminId, notes: 'DEMO / PILOT DATA', ...d });
     // Kale demand that HarvestMatch will rank.
     await demand('restaurantA', { farm_id: comcrop.id, produce_id: P.Kale.id, produce_name: 'Kale', category: 'LEAFY_GREENS', quantity: 15, required_date: addDays(T, 1), max_price: 13 });
-    await demand('hotelB', { farm_id: comcrop.id, produce_id: P.Kale.id, produce_name: 'Kale', category: 'LEAFY_GREENS', quantity: 18, required_date: addDays(T, 3), max_price: 12 });
+    await demand('hotelB', { farm_id: comcrop.id, produce_id: P.Kale.id, produce_name: 'Kale', category: 'LEAFY_GREENS', quantity: 18, min_quantity: 10, required_date: addDays(T, 3), max_price: 12 });
     await demand('communityC', { farm_id: null, produce_name: 'Kale', category: 'LEAFY_GREENS', quantity: 8, required_date: addDays(T, 5) });
     await demand('consumerG', { farm_id: null, produce_name: 'Baby Kale', category: 'LEAFY_GREENS', quantity: 3, required_date: addDays(T, 6), max_price: 10 });
     // Excluded on price (max below farm minimum).
@@ -219,6 +226,37 @@ export async function seed({ log = console.log } = {}) {
     await demand('catererE', { farm_id: comcrop.id, produce_id: P['Nai Bai'].id, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 10, required_date: addDays(T, 4), max_price: 7 });
     await demand('hotelB', { farm_id: comcrop.id, produce_id: P.Lettuce.id, produce_name: 'Lettuce', category: 'LEAFY_GREENS', quantity: 8, required_date: addDays(T, 7), max_price: 10, recurrence: 'WEEKLY' });
     await demand('consumer', { farm_id: null, produce_name: 'Mint', category: 'HERBS', quantity: 0.5, required_date: addDays(T, 6) });
+
+    // DemandPool: small Nai Bai requests, each below the 5kg farm minimum order, viable together (6kg).
+    await demand('consumerG', { farm_id: null, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 2, required_date: addDays(T, 4) });
+    await demand('consumer', { farm_id: null, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 1.5, required_date: addDays(T, 4) });
+    await demand('communityC', { farm_id: null, produce_name: 'Nai Bai', category: 'LEAFY_GREENS', quantity: 2.5, required_date: addDays(T, 5), max_price: 8 });
+
+    // FarmPool: a 60kg open-market Lettuce requirement no single farm covers; Farm B has committed 30kg.
+    const pooled = await demand('wholesalerH', {
+      farm_id: null, produce_name: 'Lettuce', category: 'LEAFY_GREENS', quantity: 60, required_date: addDays(T, 7), max_price: 9,
+      allow_pooling: true, fulfilled_quantity: 30, status: 'PARTIALLY_FULFILLED',
+    });
+    await seedOrder(client, {
+      farmId: farmB.id, buyerId: buyers.wholesalerH.id, batch: farmBLettuceBatch, quantity: 30, unitPrice: 9, status: 'CONFIRMED',
+      source: 'FARMPOOL', demandId: pooled.id, createdAt: recent, userId: users['farmb@tyllage.demo'].id,
+    });
+
+    // Dynamic Routing final stage on a past batch: surplus donated (counts towards Waste Avoided).
+    await insert(client, 'batch_dispositions', {
+      farm_id: comcrop.id, harvest_batch_id: hBasil.id, disposition_type: 'DONATION', quantity: 2,
+      recipient: 'Demo community food programme', notes: 'DEMO / PILOT DATA', created_by: farmAdminId, created_at: ts(addDays(hBasil.harvest_date, 5), 17),
+    });
+
+    // An open order dispute for the platform admin to resolve.
+    const disputed = (await client.query(
+      `SELECT o.id FROM orders o JOIN order_items oi ON oi.order_id = o.id WHERE oi.harvest_batch_id = $1 AND o.buyer_id = $2 LIMIT 1`,
+      [hNaiBai.id, buyers.restaurantA.id]
+    )).rows[0];
+    await insert(client, 'order_disputes', {
+      order_id: disputed.id, farm_id: comcrop.id, raised_by: users['restaurant@tyllage.demo'].id, raised_by_party: 'BUYER', reason: 'QUANTITY',
+      description: 'Demo: delivery was about 0.5kg short of the ordered quantity.',
+    });
 
     // ---------------------------------------------------------------- HarvestMatch history on Sweet Basil
     const run = await insert(client, 'match_runs', {
@@ -268,7 +306,7 @@ export async function seed({ log = console.log } = {}) {
     });
 
     // Derive statuses from allocations.
-    for (const b of [kale, basil, naiBai, mint, lettuce]) await syncBatchStatus(b.id, client);
+    for (const b of [kale, basil, naiBai, mint, lettuce, farmBLettuceBatch]) await syncBatchStatus(b.id, client);
   });
 
   log('Seeded DEMO / PILOT DATA for "ComCrop Singapore — Pilot Demo"');

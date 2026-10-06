@@ -161,10 +161,14 @@ export default function Demand() {
                     <tbody>
                       {rows.map((d) => (
                         <tr key={d.id}>
-                          <td className="cell-title">{d.buyerName}{d.farmId === null && <div className="cell-sub">Open-market demand</div>}</td>
+                          <td className="cell-title">
+                            {d.buyerName}
+                            {d.farmId === null && <div className="cell-sub">Open-market demand</div>}
+                            {d.allowPooling && <Badge tone="info">FarmPool · {d.supplyingFarms} farm{d.supplyingFarms === 1 ? '' : 's'}</Badge>}
+                          </td>
                           <td>{label(d.buyerType)}</td>
                           <td>{d.produceName}</td>
-                          <td className="num">{kg(d.quantity, d.unit)}</td>
+                          <td className="num">{kg(d.quantity, d.unit)}{d.minQuantity && <div className="cell-sub">min {kg(d.minQuantity, d.unit)}</div>}</td>
                           <td className="num">{kg(d.remainingQuantity, d.unit)}</td>
                           <td className="nowrap">{date(d.requiredDate, { weekday: true })}</td>
                           <td className="num">{d.maxPrice ? money(d.maxPrice) : <span className="muted">Not set</span>}</td>

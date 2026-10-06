@@ -4,6 +4,7 @@ import { query, withTransaction } from '../config/db.js';
 import { validate } from '../utils/validate.js';
 import { unauthorized, conflict } from '../utils/errors.js';
 import { signToken, loadAuthUser } from '../middleware/auth.js';
+import { logAudit } from './auditService.js';
 import { BUSINESS_BUYER_TYPES, REGIONS, COLLECTION_METHODS } from '../config/rules.js';
 
 const BCRYPT_ROUNDS = 12;
@@ -74,7 +75,7 @@ export async function register(input) {
   return { token: signToken(user), user };
 }
 
-export async function login(input) {
+export async function login(input, ip) {
   const { email, password } = validate(loginSchema, input);
   const { rows } = await query('SELECT id, password_hash, is_active FROM users WHERE LOWER(email) = $1', [email]);
   const row = rows[0];
@@ -82,10 +83,15 @@ export async function login(input) {
   // Always run a bcrypt compare so response timing doesn't reveal whether the email exists.
   const hash = row?.password_hash || '$2a$12$C6UzMDM.H6dfI/f/IKcEeO5X9yWnYhJ6eQ6gYxQ5x0zXzM0JjYy9u';
   const valid = await bcrypt.compare(password, hash);
-  if (!row || !valid) throw unauthorized('Invalid email or password', 'INVALID_CREDENTIALS');
+  if (!row || !valid) {
+    // Security audit trail (visible to platform admins). The attempted password is never logged.
+    await logAudit({ userId: row?.id ?? null, action: 'LOGIN_FAILED', entityType: 'user', entityId: row?.id ?? null, details: { email }, ip });
+    throw unauthorized('Invalid email or password', 'INVALID_CREDENTIALS');
+  }
   if (!row.is_active) throw unauthorized('Account is not active', 'ACCOUNT_INACTIVE');
 
   await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [row.id]);
+  await logAudit({ userId: row.id, action: 'LOGIN_SUCCEEDED', entityType: 'user', entityId: row.id, ip });
   const user = await loadAuthUser(row.id);
   return { token: signToken(user), user };
 }

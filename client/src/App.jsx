@@ -31,6 +31,13 @@ import CommunityDrops from './pages/consumer/CommunityDrops.jsx';
 import MyInterests from './pages/consumer/MyInterests.jsx';
 import AdminFarms from './pages/admin/Farms.jsx';
 import AdminUsers from './pages/admin/Users.jsx';
+import AdminPolicies from './pages/admin/Policies.jsx';
+import AdminDisputes from './pages/admin/Disputes.jsx';
+import AdminAuditLog from './pages/admin/AuditLog.jsx';
+import FarmPool from './pages/farm/FarmPool.jsx';
+import DemandPool from './pages/farm/DemandPool.jsx';
+import FarmDirectory from './pages/market/FarmDirectory.jsx';
+import FarmProfile from './pages/market/FarmProfile.jsx';
 
 /** Client-side route guard for UX only — the API enforces every permission server-side. */
 function RequireRole({ roles, children }) {
@@ -78,6 +85,15 @@ export default function App() {
 
         <Route path="/admin/farms" element={<RequireRole roles={['platform_admin']}><AdminFarms /></RequireRole>} />
         <Route path="/admin/users" element={<RequireRole roles={['platform_admin']}><AdminUsers /></RequireRole>} />
+        <Route path="/admin/policies" element={<RequireRole roles={['platform_admin']}><AdminPolicies /></RequireRole>} />
+        <Route path="/admin/disputes" element={<RequireRole roles={['platform_admin']}><AdminDisputes /></RequireRole>} />
+        <Route path="/admin/audit" element={<RequireRole roles={['platform_admin']}><AdminAuditLog /></RequireRole>} />
+
+        <Route path="/farm/farmpool" element={<RequireRole roles={FARM_ADMINS}><FarmPool /></RequireRole>} />
+        <Route path="/farm/demandpool" element={<RequireRole roles={FARM_ADMINS}><DemandPool /></RequireRole>} />
+
+        <Route path="/market/farms" element={<RequireRole roles={[...BUYERS, ...CONSUMERS]}><FarmDirectory /></RequireRole>} />
+        <Route path="/market/farms/:id" element={<RequireRole roles={[...BUYERS, ...CONSUMERS]}><FarmProfile /></RequireRole>} />
 
         <Route path="/buyer/dashboard" element={<RequireRole roles={BUYERS}><BuyerDashboard /></RequireRole>} />
         <Route path="/buyer/supply" element={<RequireRole roles={BUYERS}><AvailableSupply /></RequireRole>} />

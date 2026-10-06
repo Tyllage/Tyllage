@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../../services/api.js';
 import { useApi } from '../../hooks/useApi.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { PageHeader, Card, AsyncBoundary, EmptyState } from '../../components/ui.jsx';
+import { PageHeader, Card, AsyncBoundary, EmptyState, Badge } from '../../components/ui.jsx';
 import { StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
 import { kg, money, date, relativeDay, label } from '../../utils/format.js';
@@ -74,8 +74,19 @@ export default function MyDemand() {
                           <div className="cell-title">{d.produceName}</div>
                           {d.notes && <div className="cell-sub">{d.notes}</div>}
                         </td>
-                        <td>{d.farmName || <span className="muted">Any farm</span>}</td>
-                        <td className="num">{kg(d.quantity, d.unit)}</td>
+                        <td>
+                          <div>{d.farmName || <span className="muted">Any farm</span>}</div>
+                          {(d.allowPooling || Number(d.supplyingFarms) > 1) && (
+                            <div className="row mt-8">
+                              {d.allowPooling && <Badge tone="primary">FarmPool</Badge>}
+                              {Number(d.supplyingFarms) > 1 && <span className="cell-sub">Supplied by {Number(d.supplyingFarms)} farms</span>}
+                            </div>
+                          )}
+                        </td>
+                        <td className="num">
+                          <div>{kg(d.quantity, d.unit)}</div>
+                          {Number(d.minQuantity) > 0 && <div className="cell-sub">Min delivery {kg(d.minQuantity, d.unit)}</div>}
+                        </td>
                         <td className="num">{kg(d.fulfilledQuantity, d.unit)} / {kg(d.remainingQuantity, d.unit)}</td>
                         <td>
                           <div>{date(d.requiredDate)}</div>

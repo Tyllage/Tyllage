@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../services/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Card, Notice } from '../ui.jsx';
@@ -7,9 +7,12 @@ import { Icons } from '../Icons.jsx';
 import { kg, dateTime } from '../../utils/format.js';
 import RescueFormModal from './RescueFormModal.jsx';
 
+// Channels from the proposal's Demand Recovery allocation table.
 const CHANNELS = [
-  ['BUSINESS', 'Restaurant & business buyers'],
-  ['COMMUNITY', 'Community demand'],
+  ['RESTAURANT_NETWORK', 'Restaurant network'],
+  ['HOTEL', 'Hotel buyers'],
+  ['RETAIL_WHOLESALE', 'Retail & wholesale'],
+  ['COMMUNITY', 'Community / Community Drops'],
   ['CONSUMER', 'Consumers'],
 ];
 
@@ -73,9 +76,14 @@ export default function RecoveryPanel({ batch, recovery, lastRunAt, onRecovered,
           <div>
             <div className="stat-line"><span>Remaining {batch.produceName}</span><b>{kg(recovery.remainingAtStart, batch.unit)}</b></div>
             <div className="small muted mt-12 strong">Potential recovery (strong matches ≥ {recovery.strongMatchThreshold}%)</div>
-            {CHANNELS.map(([key, text]) => (
-              <div className="stat-line" key={key}><span>{text}</span><b>{kg(recovery.potentialByChannel?.[key] || 0, batch.unit)}</b></div>
+            {CHANNELS.filter(([key]) => key in (recovery.potentialByChannel || {})).map(([key, text]) => (
+              <div className="stat-line" key={key}><span>{text}</span><b>{kg(recovery.potentialByChannel[key] || 0, batch.unit)}</b></div>
             ))}
+            {(recovery.potentialFromExistingCustomers > 0 || recovery.potentialFromSubscribers > 0) && (
+              <div className="small muted" style={{ padding: '6px 0' }}>
+                Of which existing customers {kg(recovery.potentialFromExistingCustomers || 0, batch.unit)} · recurring subscribers {kg(recovery.potentialFromSubscribers || 0, batch.unit)}
+              </div>
+            )}
             {recovery.potentialWeakTotal > 0 && (
               <div className="stat-line"><span className="muted">Weak matches (below threshold)</span><b className="muted">{kg(recovery.potentialWeakTotal, batch.unit)}</b></div>
             )}
@@ -89,6 +97,8 @@ export default function RecoveryPanel({ batch, recovery, lastRunAt, onRecovered,
                 <div style={{ flex: 1 }}>
                   <div className="strong">{s.message}</div>
                 </div>
+                {s.type === 'DEMAND_POOL' && <Link className="btn btn-sm btn-primary" to="/farm/demandpool"><Icons.Users />Open DemandPool</Link>}
+                {s.type === 'RECORD_DISPOSITION' && <a className="btn btn-sm btn-primary" href="#top" onClick={(e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}><Icons.Heart />Record donation above</a>}
                 {s.type === 'MOVE_TO_RESCUE' && batch.unallocatedQuantity > 0 && (
                   <button className="btn btn-sm btn-primary" onClick={() => setRescueQty(Math.min(s.quantity, batch.unallocatedQuantity))}>
                     <Icons.Rescue />Move {kg(Math.min(s.quantity, batch.unallocatedQuantity), batch.unit)} to Rescue

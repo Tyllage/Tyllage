@@ -14,6 +14,10 @@ const produceSchema = z.object({
   unit: z.string().trim().min(1).max(20).default('kg'),
   defaultPrice: z.coerce.number().min(0).max(100000),
   isActive: z.boolean().default(true),
+  // Farm minimum order quantity (MOQ); smaller requests can still be served via DemandPool.
+  minOrderQuantity: z.coerce.number().min(0).max(100000).default(0),
+  // Shelf life drives the Dynamic Routing windows for this crop (null = platform default).
+  shelfLifeDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
 });
 
 export async function listProduce(farmId, { activeOnly = false } = {}) {
@@ -40,9 +44,9 @@ export async function createProduce(user, farmId, input) {
   assertFarmAdmin(user, farmId);
   const d = validate(produceSchema, input);
   const { rows } = await query(
-    `INSERT INTO produce (farm_id, name, category, unit, default_price, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [farmId, d.name, d.category, d.unit, d.defaultPrice, d.isActive]
+    `INSERT INTO produce (farm_id, name, category, unit, default_price, is_active, min_order_quantity, shelf_life_days)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [farmId, d.name, d.category, d.unit, d.defaultPrice, d.isActive, d.minOrderQuantity, d.shelfLifeDays ?? null]
   );
   await logAudit({ farmId, userId: user.id, action: 'PRODUCE_CREATED', entityType: 'produce', entityId: rows[0].id, details: d });
   return camelize(rows[0]);
@@ -51,18 +55,22 @@ export async function createProduce(user, farmId, input) {
 export async function updateProduce(user, id, input) {
   const existing = await loadProduce(id);
   assertFarmAdmin(user, existing.farm_id);
-  const d = validate(produceSchema.partial(), input);
+  // No defaults on update: only supplied fields change.
+  const d = validate(produceSchema.partial().extend({ isActive: z.boolean().optional(), minOrderQuantity: z.coerce.number().min(0).max(100000).optional() }), input);
   const merged = {
     name: d.name ?? existing.name,
     category: d.category ?? existing.category,
     unit: d.unit ?? existing.unit,
     defaultPrice: d.defaultPrice ?? existing.default_price,
     isActive: d.isActive ?? existing.is_active,
+    minOrderQuantity: d.minOrderQuantity ?? existing.min_order_quantity,
+    shelfLifeDays: d.shelfLifeDays !== undefined ? d.shelfLifeDays : existing.shelf_life_days,
   };
   const { rows } = await query(
-    `UPDATE produce SET name = $1, category = $2, unit = $3, default_price = $4, is_active = $5, updated_at = NOW()
-      WHERE id = $6 RETURNING *`,
-    [merged.name, merged.category, merged.unit, merged.defaultPrice, merged.isActive, id]
+    `UPDATE produce SET name = $1, category = $2, unit = $3, default_price = $4, is_active = $5,
+            min_order_quantity = $6, shelf_life_days = $7, updated_at = NOW()
+      WHERE id = $8 RETURNING *`,
+    [merged.name, merged.category, merged.unit, merged.defaultPrice, merged.isActive, merged.minOrderQuantity, merged.shelfLifeDays, id]
   );
   await logAudit({ farmId: existing.farm_id, userId: user.id, action: 'PRODUCE_UPDATED', entityType: 'produce', entityId: id, details: d });
   return camelize(rows[0]);

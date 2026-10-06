@@ -406,3 +406,22 @@ textarea.input { min-height: 90px; resize: vertical; line-height: 1.5; }
   .status-grid { grid-template-columns: minmax(0, 1fr); }
   .status-header { padding: 0 16px; }
 }
+
+/* ---------------------------------------------------------------- AI assistant + proposal features */
+.ai-panel { border: 1px solid #d9d2f2; background: #faf9ff; border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.ai-output { white-space: pre-wrap; font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.ai-prompt { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; max-height: 220px; overflow: auto; margin: 6px 0 10px; }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.mini-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--neutral-soft); color: var(--text-2); }
+.mini-chip.ok { background: var(--low-soft); color: var(--low); }
+.mini-chip.warn { background: var(--medium-soft); color: var(--medium); }
+.mini-chip.bad { background: var(--high-soft); color: var(--high); }
+.routing-track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 10px; }
+.routing-step { border-radius: 6px; padding: 8px; background: var(--neutral-soft); font-size: 11.5px; color: var(--muted); min-height: 52px; }
+.routing-step b { display: block; color: var(--text-2); font-size: 12px; }
+.routing-step.done { background: var(--primary-soft); }
+.routing-step.current { background: var(--primary); color: #dfece5; }
+.routing-step.current b { color: #fff; }
+.progress { height: 8px; border-radius: 999px; background: var(--neutral-soft); overflow: hidden; display: flex; }
+.progress > span { height: 100%; }
+@media (max-width: 700px) { .routing-track { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

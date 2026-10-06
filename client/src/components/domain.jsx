@@ -24,7 +24,7 @@ const STATUS_TONE = {
   SUGGESTED: 'medium', APPROVED: 'low', REJECTED: undefined, SUPERSEDED: undefined,
   // rescue / campaigns / drops
   ACTIVE: 'low', SOLD_OUT: 'primary', DRAFT: 'medium', SENT: 'low', SCHEDULED: 'info',
-  MOCK_SENT: 'low', FAILED: 'high',
+  MOCK_SENT: 'low', FAILED: 'high', RESOLVED: 'low',
 };
 
 export function StatusBadge({ status }) {
@@ -52,11 +52,13 @@ export function StockBar({ batch }) {
       <div className="stock-bar" role="img" aria-label={`Allocated ${batch.confirmedDemand}, Rescue ${batch.rescueQuantity}, unallocated ${batch.unallocatedQuantity}`}>
         <span className="stock-allocated" style={{ width: w(batch.confirmedDemand) }} />
         <span className="stock-rescue" style={{ width: w(batch.rescueQuantity) }} />
+        <span style={{ width: w(batch.disposedQuantity || 0), background: 'var(--info)' }} />
         <span className="stock-remaining" style={{ width: w(batch.unallocatedQuantity) }} />
       </div>
       <div className="legend">
         <span><i style={{ background: 'var(--primary)' }} />Confirmed {kg(batch.confirmedDemand, batch.unit)}</span>
         {batch.rescueQuantity > 0 && <span><i style={{ background: 'var(--accent)' }} />Rescue {kg(batch.rescueQuantity, batch.unit)}</span>}
+        {batch.disposedQuantity > 0 && <span><i style={{ background: 'var(--info)' }} />Donated / other {kg(batch.disposedQuantity, batch.unit)}</span>}
         <span><i style={{ background: '#e5b4ae' }} />Unallocated {kg(batch.unallocatedQuantity, batch.unit)}</span>
       </div>
     </div>

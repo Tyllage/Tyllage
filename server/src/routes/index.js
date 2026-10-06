@@ -5,7 +5,7 @@ import produceRoutes from './produceRoutes.js';
 import harvestRoutes from './harvestRoutes.js';
 import demandRoutes from './demandRoutes.js';
 import matchRoutes from './matchRoutes.js';
-import orderRoutes from './orderRoutes.js';
+import orderRoutes, { disputeRoutes } from './orderRoutes.js';
 import recoveryRoutes from './recoveryRoutes.js';
 import rescueRoutes from './rescueRoutes.js';
 import campaignRoutes from './campaignRoutes.js';
@@ -14,6 +14,9 @@ import communityDropRoutes from './communityDropRoutes.js';
 import marketplaceRoutes from './marketplaceRoutes.js';
 import userRoutes from './userRoutes.js';
 import miscRoutes from './miscRoutes.js';
+import aiRoutes from './aiRoutes.js';
+import adminRoutes from './adminRoutes.js';
+import { farmPoolRoutes, demandPoolRoutes } from './networkRoutes.js';
 
 const router = Router();
 
@@ -31,6 +34,11 @@ router.use('/analytics', analyticsRoutes);
 router.use('/community-drops', communityDropRoutes);
 router.use('/marketplace', marketplaceRoutes);
 router.use('/users', userRoutes);
+router.use('/farmpool', farmPoolRoutes);
+router.use('/demandpool', demandPoolRoutes);
+router.use('/ai', aiRoutes);
+router.use('/disputes', disputeRoutes);
+router.use('/admin', adminRoutes);
 router.use('/', miscRoutes);
 
 export default router;

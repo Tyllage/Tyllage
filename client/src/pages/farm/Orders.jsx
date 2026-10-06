@@ -22,6 +22,7 @@ function OrdersTable({ farmId }) {
   const { isFarmAdmin } = useAuth();
   const toast = useToast();
   const [status, setStatus] = useState(FILTERS[0].value);
+  const [reporting, setReporting] = useState(null);
   const state = useApi(() => api.get('/orders', { farmId, status }), [farmId, status], { enabled: Boolean(farmId) });
 
   const update = async (order, next) => {
@@ -60,7 +61,8 @@ function OrdersTable({ farmId }) {
                       <td><StatusBadge status={o.status} />{o.cancelledReason && <div className="cell-sub">{o.cancelledReason}</div>}</td>
                       <td className="nowrap">
                         {NEXT[o.status] && <button className="btn btn-sm" onClick={() => update(o, NEXT[o.status][0])}>{NEXT[o.status][1]}</button>}{' '}
-                        {isFarmAdmin && NEXT[o.status] && <button className="btn btn-sm btn-ghost" onClick={() => update(o, 'CANCELLED')}>Cancel</button>}
+                        {isFarmAdmin && NEXT[o.status] && <button className="btn btn-sm btn-ghost" onClick={() => update(o, 'CANCELLED')}>Cancel</button>}{' '}
+                        {o.status !== 'PENDING' && <button className="btn btn-sm btn-ghost" onClick={() => setReporting(o)}>Report issue</button>}
                       </td>
                     </tr>
                   ))}
@@ -69,6 +71,68 @@ function OrdersTable({ farmId }) {
             </div>
           )
         }
+      </AsyncBoundary>
+      {reporting && <DisputeModal order={reporting} onClose={() => setReporting(null)} />}
+    </Card>
+  );
+}
+
+const DISPUTE_REASONS = ['QUALITY', 'QUANTITY', 'LATE', 'NO_SHOW', 'PRICING', 'OTHER'];
+
+function DisputeModal({ order, onClose }) {
+  const toast = useToast();
+  const [form, setForm] = useState({ reason: 'NO_SHOW', description: '' });
+  const submit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post(`/orders/${order.id}/disputes`, form);
+      toast('Issue reported — a Tyllage platform admin will review it');
+      onClose();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+  return (
+    <Modal title={`Report an issue on order #${order.id}`} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" form="dispute-form">Submit</button></>}>
+      <form id="dispute-form" className="form" onSubmit={submit}>
+        <Field label="Reason">
+          <select className="input" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}>
+            {DISPUTE_REASONS.map((r) => <option key={r} value={r}>{label(r)}</option>)}
+          </select>
+        </Field>
+        <Field label="What happened?"><textarea className="input" rows={3} minLength={5} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} required /></Field>
+      </form>
+    </Modal>
+  );
+}
+
+function Disputes() {
+  const state = useApi(() => api.get('/disputes'), []);
+  return (
+    <Card tight title="Disputes" description="Issues raised by buyers or your farm. Platform admins resolve them.">
+      <AsyncBoundary state={state}>
+        {(rows) => rows.length === 0 ? <EmptyState title="No disputes" /> : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Raised</th><th>Order</th><th>Buyer</th><th>By</th><th>Reason</th><th>Details</th><th>Status</th><th>Resolution</th></tr></thead>
+              <tbody>
+                {rows.map((d) => (
+                  <tr key={d.id}>
+                    <td className="nowrap">{dateTime(d.createdAt)}</td>
+                    <td>#{d.orderId}</td>
+                    <td>{d.buyerName}</td>
+                    <td>{label(d.raisedByParty)}</td>
+                    <td>{label(d.reason)}</td>
+                    <td className="small" style={{ maxWidth: 280 }}>{d.description}</td>
+                    <td><StatusBadge status={d.status} /></td>
+                    <td className="small">{d.resolution || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </AsyncBoundary>
     </Card>
   );
@@ -166,8 +230,10 @@ export default function Orders() {
   return (
     <>
       <PageHeader title="Orders" description="Orders come from approved matches, recovery and Rescue reservations. Cancelling releases stock back to the batch." />
-      <Tabs tabs={[{ value: 'orders', label: 'Orders' }, { value: 'drops', label: 'Community Drops' }]} value={tab} onChange={setTab} />
-      {tab === 'orders' ? <OrdersTable farmId={farmId} /> : <CommunityDrops farmId={farmId} />}
+      <Tabs tabs={[{ value: 'orders', label: 'Orders' }, { value: 'drops', label: 'Community Drops' }, { value: 'disputes', label: 'Disputes' }]} value={tab} onChange={setTab} />
+      {tab === 'orders' && <OrdersTable farmId={farmId} />}
+      {tab === 'drops' && <CommunityDrops farmId={farmId} />}
+      {tab === 'disputes' && <Disputes />}
     </>
   );
 }

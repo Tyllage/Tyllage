@@ -22,8 +22,13 @@ const demandSchema = z
     maxPrice: z.coerce.number().positive().max(100000).nullable().optional(),
     recurrence: z.enum(['NONE', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']).default('NONE'),
     notes: z.string().trim().max(2000).nullable().optional(),
+    // Smallest partial delivery the buyer will accept (minimum order quantity).
+    minQuantity: z.coerce.number().positive().max(100000).nullable().optional(),
+    // FarmPool: let several farms fulfil this request together (open-market demand only).
+    allowPooling: z.boolean().optional(),
   })
-  .refine((d) => d.produceId || d.produceName, { message: 'Choose a produce item or enter a produce name', path: ['produceName'] });
+  .refine((d) => d.produceId || d.produceName, { message: 'Choose a produce item or enter a produce name', path: ['produceName'] })
+  .refine((d) => !d.minQuantity || d.minQuantity <= d.quantity, { message: 'Minimum cannot exceed the requested quantity', path: ['minQuantity'] });
 
 const updateSchema = z.object({
   quantity: z.coerce.number().positive().max(100000).optional(),
@@ -35,6 +40,8 @@ const updateSchema = z.object({
 
 const DEMAND_SELECT = `
   SELECT dr.*, (dr.quantity - dr.fulfilled_quantity) AS remaining_quantity,
+         (SELECT COUNT(DISTINCT o.farm_id) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+           WHERE oi.demand_request_id = dr.id AND o.status <> 'CANCELLED') AS supplying_farms,
          bp.organisation_name AS buyer_name, bp.buyer_type, bp.region AS buyer_region,
          f.name AS farm_name
     FROM demand_requests dr
@@ -127,12 +134,16 @@ export async function createDemand(user, input, ip) {
     if (!farm.rowCount) throw badRequest('Farm not found', 'INVALID_FARM');
   }
 
+  if (d.allowPooling && farmId) {
+    throw badRequest('FarmPool requests must be open to any farm (do not pick a specific farm)', 'VALIDATION_ERROR');
+  }
+
   const { rows } = await query(
     `INSERT INTO demand_requests (buyer_id, farm_id, produce_id, produce_name, category, quantity, unit,
-                                  required_date, max_price, recurrence, notes, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+                                  required_date, max_price, recurrence, notes, created_by, min_quantity, allow_pooling)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
     [buyerId, farmId, d.produceId ?? null, produceName, category, d.quantity, unit, d.requiredDate,
-      d.maxPrice ?? null, d.recurrence, d.notes ?? null, user.id]
+      d.maxPrice ?? null, d.recurrence, d.notes ?? null, user.id, d.minQuantity ?? null, d.allowPooling ?? false]
   );
   await logAudit({ farmId, userId: user.id, action: 'DEMAND_CREATED', entityType: 'demand_request', entityId: rows[0].id, details: { buyerId, produceName, quantity: d.quantity }, ip });
   return camelize(await loadDemand(rows[0].id));

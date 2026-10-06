@@ -1,4 +1,4 @@
-import { RISK_THRESHOLDS, AT_RISK_WINDOW_DAYS } from '../config/rules.js';
+import { getPolicy } from './policyService.js';
 import { round2, percent } from '../utils/numbers.js';
 import { todayISO, daysBetween } from '../utils/dates.js';
 
@@ -10,8 +10,9 @@ export function demandCoverage(confirmedDemand, expectedHarvest) {
 /** Transparent rule-based risk level from coverage percent. */
 export function riskLevel(coverage) {
   if (coverage === null || coverage === undefined) return null;
-  if (coverage >= RISK_THRESHOLDS.LOW) return 'LOW';
-  if (coverage >= RISK_THRESHOLDS.MEDIUM) return 'MEDIUM';
+  const { riskThresholds } = getPolicy();
+  if (coverage >= riskThresholds.LOW) return 'LOW';
+  if (coverage >= riskThresholds.MEDIUM) return 'MEDIUM';
   return 'HIGH';
 }
 
@@ -24,12 +25,13 @@ export function batchMetrics(row, today = todayISO()) {
   const harvestQuantity = Number(row.harvest_quantity);
   const confirmedDemand = Number(row.allocated_quantity);
   const rescueQuantity = Number(row.rescue_quantity || 0);
+  const disposedQuantity = Number(row.disposed_quantity || 0);
   const unallocated = Math.max(0, round2(Number(row.remaining_quantity)));
   const coverage = demandCoverage(confirmedDemand, harvestQuantity);
   const closed = row.status === 'CLOSED';
   const level = closed ? null : riskLevel(coverage);
   const daysToHarvest = daysBetween(today, row.harvest_date);
-  const imminent = daysToHarvest <= AT_RISK_WINDOW_DAYS;
+  const imminent = daysToHarvest <= getPolicy().atRiskWindowDays;
 
   let atRiskQuantity = 0;
   if (!closed && unallocated > 0 && (level === 'HIGH' || level === 'MEDIUM' || imminent)) {
@@ -40,6 +42,7 @@ export function batchMetrics(row, today = todayISO()) {
     harvestQuantity,
     confirmedDemand,
     rescueQuantity,
+    disposedQuantity,
     unallocatedQuantity: unallocated,
     demandCoverage: coverage,
     riskLevel: level,
@@ -55,9 +58,9 @@ export function batchMetrics(row, today = todayISO()) {
 export function deriveBatchStatus(row, today = todayISO()) {
   if (row.status === 'CLOSED') return 'CLOSED';
   const m = batchMetrics(row, today);
-  const committed = m.confirmedDemand + m.rescueQuantity;
+  const committed = m.confirmedDemand + m.rescueQuantity + m.disposedQuantity;
   if (m.unallocatedQuantity <= 0 && committed > 0) return 'FULLY_ALLOCATED';
-  if (m.riskLevel === 'HIGH' && m.daysToHarvest <= AT_RISK_WINDOW_DAYS) return 'AT_RISK';
+  if (m.riskLevel === 'HIGH' && m.daysToHarvest <= getPolicy().atRiskWindowDays) return 'AT_RISK';
   if (committed > 0) return 'PARTIALLY_ALLOCATED';
   return row.marked_available ? 'AVAILABLE' : 'PLANNED';
 }

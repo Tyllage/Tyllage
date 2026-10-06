@@ -24,12 +24,16 @@ import * as notifications from '../services/notificationService.js';
 import * as audit from '../services/auditService.js';
 import * as users from '../services/userService.js';
 import { verifyWebhook } from '../services/whatsappService.js';
+import * as farmPool from '../services/farmPoolService.js';
+import * as demandPool from '../services/demandPoolService.js';
+import * as ai from '../services/aiService.js';
+import * as policies from '../services/policyService.js';
 
 const id = (req) => idParam(req.params.id);
 
 export const authController = {
   register: async (req, res) => created(res, await auth.register(req.body)),
-  login: async (req, res) => ok(res, await auth.login(req.body)),
+  login: async (req, res) => ok(res, await auth.login(req.body, req.ip)),
   me: async (req, res) => ok(res, { user: req.user }),
 };
 
@@ -162,3 +166,51 @@ export const whatsappController = {
   receive: (_req, res) => res.sendStatus(200),
 };
 
+
+// ---------------------------------------------------------------- proposal features
+
+export const extraHarvestController = {
+  dispositions: async (req, res) => ok(res, await harvests.listDispositions(req.user, id(req))),
+  recordDisposition: async (req, res) => created(res, await harvests.recordDisposition(req.user, id(req), req.body, req.ip)),
+};
+
+export const extraOrderController = {
+  createDirect: async (req, res) => created(res, await orders.createDirectOrder(req.user, req.body, req.ip)),
+  raiseDispute: async (req, res) => created(res, await orders.raiseDispute(req.user, id(req), req.body, req.ip)),
+  listDisputes: async (req, res) => ok(res, await orders.listDisputes(req.user, { status: req.query.status })),
+  resolveDispute: async (req, res) => ok(res, await orders.resolveDispute(req.user, id(req), req.body, req.ip)),
+};
+
+export const poolController = {
+  farmPool: async (req, res) => ok(res, await farmPool.listFarmPool(req.user, req.farmId)),
+  contribute: async (req, res) => created(res, await farmPool.contribute(req.user, idParam(req.params.demandId, 'demandId'), req.body, req.ip)),
+  demandPoolSuggestions: async (req, res) => ok(res, await demandPool.listSuggestions(req.user, req.farmId)),
+  demandPools: async (req, res) => ok(res, await demandPool.listPools(req.user, req.farmId)),
+  createDemandPool: async (req, res) => created(res, await demandPool.createPool(req.user, req.body, req.ip)),
+};
+
+export const extraAnalyticsController = {
+  comparison: async (req, res) => ok(res, await analytics.getComparison(req.farmId)),
+  saveBaseline: async (req, res) => {
+    await analytics.saveBaseline(req.user, req.farmId, req.body, req.ip);
+    ok(res, await analytics.getComparison(req.farmId));
+  },
+};
+
+export const aiController = {
+  status: (_req, res) => ok(res, ai.aiStatus()),
+  explainMatch: async (req, res) => ok(res, await ai.explainMatch(req.user, id(req))),
+  insights: async (req, res) => ok(res, await ai.demandInsights(req.user, req.farmId)),
+  variations: async (req, res) => ok(res, await ai.campaignVariations(req.user, id(req))),
+  rescuePrice: async (req, res) => ok(res, await rescue.getPriceSuggestion(req.user, idParam(req.query.harvestBatchId, 'harvestBatchId'))),
+};
+
+export const adminController = {
+  policies: async (_req, res) => ok(res, await policies.listPolicies()),
+  updatePolicies: async (req, res) => ok(res, await policies.updatePolicies(req.user, req.body, req.ip)),
+  auditLogs: async (_req, res) => ok(res, await audit.listPlatformAuditLogs()),
+};
+
+export const farmProfileController = {
+  get: async (req, res) => ok(res, await marketplace.getFarmProfile(id(req))),
+};

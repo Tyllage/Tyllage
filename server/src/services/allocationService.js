@@ -55,6 +55,7 @@ export async function createAllocatedOrder(client, p) {
     );
   }
 
+  const farmMoq = Number(batch.min_order_quantity || 0);
   if (p.demandRequestId) {
     const demand = await lockDemand(client, p.demandRequestId);
     if (!['OPEN', 'PARTIALLY_FULFILLED'].includes(demand.status)) {
@@ -63,6 +64,13 @@ export async function createAllocatedOrder(client, p) {
     const demandRemaining = round2(demand.quantity - demand.fulfilled_quantity);
     if (quantity > demandRemaining) {
       throw conflict(`Buyer only needs ${demandRemaining}${demand.unit} more`, 'DEMAND_EXCEEDED');
+    }
+    // Minimum order quantities (a final top-up that completes the request is always allowed).
+    if (demand.min_quantity && quantity < Number(demand.min_quantity) && quantity < demandRemaining) {
+      throw conflict(`Buyer's minimum delivery is ${demand.min_quantity}${demand.unit}`, 'BELOW_BUYER_MINIMUM');
+    }
+    if (p.enforceFarmMoq !== false && farmMoq > 0 && quantity < farmMoq && quantity < demandRemaining) {
+      throw conflict(`Below the farm minimum order of ${farmMoq}${batch.unit} (use DemandPool to combine small requests)`, 'BELOW_FARM_MINIMUM');
     }
     const fulfilled = round2(Number(demand.fulfilled_quantity) + quantity);
     await client.query(
@@ -99,6 +107,70 @@ export async function createAllocatedOrder(client, p) {
   }
   await syncBatchStatus(batch.id, client);
   return { order: order.rows[0], batch };
+}
+
+/**
+ * Direct (bulk) order from available supply: several lines from one farm in one order, status PENDING
+ * until the farm confirms. Each line reserves stock immediately, so it can never be oversold; any
+ * failing line rolls back the whole order.
+ */
+export async function createMultiLineOrder(client, { buyerId, lines, collectionMethod, notes, userId }) {
+  if (!lines.length) throw badRequest('Add at least one item', 'VALIDATION_ERROR');
+  const ids = [...new Set(lines.map((l) => l.batchId))].sort((a, b) => a - b);
+  if (ids.length !== lines.length) throw badRequest('Each batch can appear only once per order', 'VALIDATION_ERROR');
+
+  const batches = new Map();
+  for (const id of ids) {
+    const b = await lockBatch(id, client); // locked in id order to avoid deadlocks
+    if (!b) throw notFound(`Harvest batch ${id} not found`);
+    if (b.status === 'CLOSED') throw conflict(`${b.produce_name} is no longer available`, 'BATCH_CLOSED');
+    batches.set(id, b);
+  }
+  const farmIds = new Set([...batches.values()].map((b) => b.farm_id));
+  if (farmIds.size !== 1) throw badRequest('A single order can only contain produce from one farm', 'MULTI_FARM_ORDER');
+  const farmId = [...farmIds][0];
+  const method = collectionMethod || 'FARM_PICKUP';
+  const offered = [...batches.values()][0].fulfilment_methods || [];
+  if (!offered.includes(method)) {
+    throw badRequest(`This farm does not offer ${method.toLowerCase().replace('_', ' ')}`, 'COLLECTION_METHOD_UNAVAILABLE');
+  }
+
+  let total = 0;
+  const priced = lines.map((l) => {
+    const b = batches.get(l.batchId);
+    const quantity = round2(l.quantity);
+    if (!(quantity > 0)) throw badRequest('Quantity must be greater than 0', 'VALIDATION_ERROR');
+    if (quantity > Number(b.remaining_quantity)) {
+      throw conflict(`Only ${Math.max(0, b.remaining_quantity)}${b.unit} of ${b.produce_name} is available`, 'OVER_ALLOCATION');
+    }
+    const moq = Number(b.min_order_quantity || 0);
+    if (moq > 0 && quantity < moq) {
+      throw conflict(`Minimum order for ${b.produce_name} is ${moq}${b.unit}`, 'BELOW_FARM_MINIMUM');
+    }
+    const lineTotal = round2(quantity * Number(b.preferred_price));
+    total = round2(total + lineTotal);
+    return { b, quantity, unitPrice: Number(b.preferred_price), lineTotal };
+  });
+
+  const scheduled = priced.map((x) => x.b.harvest_date).sort().at(-1);
+  const order = await client.query(
+    `INSERT INTO orders (farm_id, buyer_id, status, source, collection_method, scheduled_date, total_amount, notes, created_by)
+     VALUES ($1, $2, 'PENDING', 'DIRECT', $3, $4, $5, $6, $7) RETURNING *`,
+    [farmId, buyerId, collectionMethod || 'FARM_PICKUP', scheduled, total, notes || null, userId]
+  );
+  for (const x of priced) {
+    const item = await client.query(
+      `INSERT INTO order_items (order_id, produce_id, harvest_batch_id, quantity, unit_price, line_total)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [order.rows[0].id, x.b.produce_id, x.b.id, x.quantity, x.unitPrice, x.lineTotal]
+    );
+    await client.query(
+      'INSERT INTO allocations (farm_id, harvest_batch_id, order_item_id, quantity) VALUES ($1, $2, $3, $4)',
+      [farmId, x.b.id, item.rows[0].id, x.quantity]
+    );
+    await syncBatchStatus(x.b.id, client);
+  }
+  return order.rows[0];
 }
 
 /**

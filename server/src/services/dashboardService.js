@@ -7,7 +7,8 @@ import { listBatches, toBatchDTO } from '../models/harvestModel.js';
 import { riskLevel } from './riskService.js';
 import { listRecoveryCandidates } from './recoveryService.js';
 import { expireListings } from './rescueService.js';
-import { RISK_THRESHOLDS, AT_RISK_WINDOW_DAYS } from '../config/rules.js';
+import { getPolicy } from './policyService.js';
+import { loadOpenDemandForFarm, potentialDemandFor } from './harvestMatchService.js';
 
 const sum = (arr, key) => round2(arr.reduce((s, x) => s + Number(x[key] || 0), 0));
 
@@ -38,7 +39,9 @@ export async function getDashboard(farmId) {
     listRecoveryCandidates(farmId),
   ]);
 
-  const batches = batchRows.map(toBatchDTO);
+  // Demand Radar: open, unconfirmed demand that fits each batch's produce and timing.
+  const openDemand = await loadOpenDemandForFarm(farmId);
+  const batches = batchRows.map((row) => ({ ...toBatchDTO(row), potentialDemand: potentialDemandFor(row, openDemand) }));
   const pendingByBatch = new Map(pendingMatches.rows.map((r) => [r.harvest_batch_id, r.count]));
   const expected = sum(batches, 'harvestQuantity');
   const confirmed = sum(batches, 'confirmedDemand');
@@ -47,6 +50,7 @@ export async function getDashboard(farmId) {
   const kpis = {
     expectedHarvest: expected,
     confirmedDemand: confirmed,
+    potentialDemand: round2(batches.reduce((s, b) => s + b.potentialDemand.quantity, 0)),
     demandCoverage: coverage,
     riskLevel: riskLevel(coverage),
     unallocatedProduce: sum(batches, 'unallocatedQuantity'),
@@ -80,6 +84,15 @@ export async function getDashboard(farmId) {
       });
     }
   }
+  // Dynamic Routing: late-stage stock needs a route change (clearance, donation).
+  for (const b of batches) {
+    if (b.routing?.active && ['CLEARANCE', 'DONATION'].includes(b.routing.stage)) {
+      actions.push({
+        type: 'ROUTING', priority: b.routing.stage === 'DONATION' ? 1 : 2, harvestBatchId: b.id,
+        message: `${b.produceName} is at "${b.routing.label}" (day ${b.routing.daysSinceHarvest} of ${b.routing.shelfLifeDays}) — ${b.routing.advice.toLowerCase()}`,
+      });
+    }
+  }
   if (orders.rows[0].pending) {
     actions.push({ type: 'CONFIRM_ORDERS', priority: 2, message: `${orders.rows[0].pending} order(s) awaiting confirmation` });
   }
@@ -99,6 +112,6 @@ export async function getDashboard(farmId) {
     // Suggestions on a batch with nothing left to allocate aren't actionable.
     upcomingHarvest: batches.map((b) => ({ ...b, pendingMatches: b.unallocatedQuantity > 0 ? pendingByBatch.get(b.id) || 0 : 0 })),
     actions,
-    rules: { riskThresholds: RISK_THRESHOLDS, atRiskWindowDays: AT_RISK_WINDOW_DAYS },
+    rules: { riskThresholds: getPolicy().riskThresholds, atRiskWindowDays: getPolicy().atRiskWindowDays },
   };
 }

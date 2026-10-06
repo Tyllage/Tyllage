@@ -1,12 +1,17 @@
 import { query } from '../config/db.js';
 import { camelize } from '../utils/case.js';
 import { batchMetrics, deriveBatchStatus } from '../services/riskService.js';
+import { routingFor } from '../services/routingService.js';
+import { batchMarginGuard } from '../services/marginService.js';
 
 export const BATCH_SELECT = `
-  SELECT hb.*, p.name AS produce_name, p.category, p.unit, f.name AS farm_name,
-         f.region AS farm_region, f.fulfilment_methods,
+  SELECT hb.*, p.name AS produce_name, p.category, p.unit, p.shelf_life_days, p.min_order_quantity,
+         f.name AS farm_name, f.region AS farm_region, f.fulfilment_methods, f.min_margin_pct,
          bs.harvest_quantity, bs.allocated_quantity, bs.rescue_quantity,
-         bs.rescue_sold_quantity, bs.remaining_quantity
+         bs.rescue_sold_quantity, bs.remaining_quantity, bs.disposed_quantity,
+         (SELECT COALESCE(SUM(oi.line_total), 0) FROM order_items oi
+            JOIN allocations a ON a.order_item_id = oi.id AND a.status = 'ACTIVE'
+           WHERE oi.harvest_batch_id = hb.id) AS committed_revenue
     FROM harvest_batches hb
     JOIN produce p ON p.id = hb.produce_id
     JOIN farms f ON f.id = hb.farm_id
@@ -54,7 +59,8 @@ export function toBatchDTO(row) {
   const metrics = batchMetrics(row);
   const dto = camelize(row);
   delete dto.markedAvailable;
-  return { ...dto, markedAvailable: row.marked_available, ...metrics };
+  const routing = row.status === 'CLOSED' ? null : { ...routingFor(row), active: metrics.unallocatedQuantity > 0 };
+  return { ...dto, markedAvailable: row.marked_available, ...metrics, routing, marginGuard: batchMarginGuard(row) };
 }
 
 /** Public/buyer-facing shape: never exposes the farm's minimum acceptable price or internal notes. */
@@ -71,6 +77,7 @@ export function toPublicBatchDTO(row) {
     grade: row.grade,
     price: row.preferred_price,
     availableQuantity: Math.max(0, Number(row.remaining_quantity)),
+    minOrderQuantity: Number(row.min_order_quantity || 0),
     status: row.status,
   };
 }

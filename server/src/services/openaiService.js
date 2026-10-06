@@ -89,6 +89,25 @@ export function findUnapprovedPrices(content, ctx) {
   return [...new Set(found.filter((p) => !allowed.has(p)))];
 }
 
+/** Low-level Chat Completions call shared by Tyllage Connect and the AI assistant. Throws on failure. */
+export async function callOpenAI({ system, user, maxTokens = 400, temperature = 0.5 }) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL,
+      temperature,
+      max_tokens: maxTokens,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  const content = data?.choices?.[0]?.message?.content?.trim();
+  if (!res.ok || !content) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return content;
+}
+
 export async function generateCampaignCopy(ctx) {
   if (!isOpenAIConfigured()) {
     return { content: mockCopy(ctx), mode: 'MOCK', warnings: [] };

@@ -5,14 +5,30 @@ import { Badge, EmptyState } from '../ui.jsx';
 import { ScoreRing, StatusBadge } from '../domain.jsx';
 import { Icons } from '../Icons.jsx';
 import { kg, label, money, date } from '../../utils/format.js';
+import { MarginChip } from './MarginGuardCard.jsx';
+import AiPanel from '../AiPanel.jsx';
 
 const FACTOR_LABELS = { produce: 'Produce', date: 'Date', price: 'Price', quantity: 'Quantity', reliability: 'Reliability', location: 'Location' };
+const URGENCY_TONE = { LOW: 'ok', MEDIUM: 'warn', HIGH: 'bad', CRITICAL: 'bad' };
 
 function MatchCard({ match, unit, canDecide, selected, onSelect, onDecided }) {
   const toast = useToast();
   const [qty, setQty] = useState(match.recommendedQuantity);
   const [busy, setBusy] = useState(false);
+  const [ai, setAi] = useState(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const pending = match.status === 'SUGGESTED';
+
+  const explain = async () => {
+    setAiBusy(true);
+    try {
+      setAi(await api.post(`/ai/matches/${match.id}/explain`));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const approve = async () => {
     setBusy(true);
@@ -74,6 +90,15 @@ function MatchCard({ match, unit, canDecide, selected, onSelect, onDecided }) {
         {match.reasons.map((r) => <li key={r}>{r}</li>)}
         {match.warnings.map((w) => <li key={w} className="warn">{w}</li>)}
       </ul>
+
+      {/* Decision support from the proposal (does not change the score): margin, urgency, purchase likelihood. */}
+      <div className="chip-row">
+        <MarginChip margin={match.margin} />
+        {match.urgency && <span className={`mini-chip ${URGENCY_TONE[match.urgency]}`}>Urgency: {label(match.urgency)}</span>}
+        {match.scoreBreakdown?.reliability && <span className="mini-chip">Purchase likelihood {match.scoreBreakdown.reliability.score}%</span>}
+        <button className="btn btn-ghost btn-sm" onClick={explain} disabled={aiBusy}><Icons.Sparkle />{aiBusy ? 'Explaining…' : 'Explain with AI'}</button>
+      </div>
+      {ai && <div className="mt-8"><AiPanel result={ai} title="Why this match?" onClose={() => setAi(null)} /></div>}
 
       {match.scoreBreakdown && (
         <div className="breakdown" title="Weighted factors — transparent rules, not AI">

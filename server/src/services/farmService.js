@@ -15,6 +15,8 @@ const farmFields = {
   contactEmail: z.email().nullable().optional(),
   contactPhone: z.string().trim().max(40).nullable().optional(),
   fulfilmentMethods: z.array(z.enum(COLLECTION_METHODS)).min(1).optional(),
+  // Margin Guard: minimum acceptable margin % on sales.
+  minMarginPct: z.coerce.number().min(0).max(95).optional(),
 };
 
 const createFarmSchema = z.object({
@@ -69,6 +71,7 @@ export async function updateFarm(user, farmId, input) {
   const map = {
     name: 'name', description: 'description', region: 'region', address: 'address',
     contactEmail: 'contact_email', contactPhone: 'contact_phone', fulfilmentMethods: 'fulfilment_methods',
+    minMarginPct: 'min_margin_pct',
   };
   const sets = [];
   const values = [];

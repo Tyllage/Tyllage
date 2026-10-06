@@ -4,17 +4,18 @@ import { api } from '../../services/api.js';
 import { useApi } from '../../hooks/useApi.js';
 import { PageHeader, AsyncBoundary, EmptyState, Card, Notice } from '../../components/ui.jsx';
 import { Icons } from '../../components/Icons.jsx';
-import { ProduceCard, RequestSupplyModal } from '../buyer/demandShared.jsx';
+import { ProduceCard, RequestSupplyModal, BuyModal } from '../buyer/demandShared.jsx';
 
 export default function GrowingSoon() {
   const state = useApi(() => api.get('/marketplace/supply'), []);
   const [selected, setSelected] = useState(null);
+  const [buying, setBuying] = useState(null);
 
   return (
     <>
       <PageHeader
         title="Growing soon"
-        description="Upcoming harvests from local farms. Registering interest early helps farms plan how much to harvest."
+        description="Upcoming harvests from local farms. Pre-order directly, or register interest early to help farms plan how much to harvest."
         actions={<Link className="btn" to="/consumer/available">Available now</Link>}
       />
       <div className="stack">
@@ -32,7 +33,12 @@ export default function GrowingSoon() {
                     key={b.id}
                     item={b}
                     upcoming
-                    action={<button className="btn btn-sm" onClick={() => setSelected(b)}><Icons.Sprout width={14} /> Register interest</button>}
+                    action={
+                      <>
+                        <button className="btn btn-sm" onClick={() => setSelected(b)}><Icons.Sprout width={14} /> Register interest</button>
+                        <button className="btn btn-primary btn-sm" onClick={() => setBuying(b)}><Icons.Orders width={14} /> Pre-order</button>
+                      </>
+                    }
                   />
                 ))}
               </div>
@@ -41,6 +47,7 @@ export default function GrowingSoon() {
         </AsyncBoundary>
       </div>
       {selected && <RequestSupplyModal consumer item={selected} onClose={() => setSelected(null)} onDone={state.reload} />}
+      {buying && <BuyModal item={buying} onClose={() => setBuying(null)} onDone={state.reload} />}
     </>
   );
 }

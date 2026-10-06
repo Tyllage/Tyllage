@@ -2,6 +2,7 @@ import env from './config/env.js';
 import { pool } from './config/db.js';
 import { runMigrations } from './db/migrate.js';
 import { createApp } from './app.js';
+import { loadPolicies } from './services/policyService.js';
 
 async function start() {
   // Apply pending migrations on boot so a fresh Railway Postgres is usable immediately.
@@ -9,6 +10,7 @@ async function start() {
     await runMigrations();
   }
 
+  await loadPolicies();
   const app = createApp();
   const server = app.listen(env.PORT, () => {
     console.log(`Tyllage API listening on port ${env.PORT} (${env.NODE_ENV})`);

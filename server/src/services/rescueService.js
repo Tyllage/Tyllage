@@ -15,11 +15,15 @@ import { createAllocatedOrder } from './allocationService.js';
 import { logAudit } from './auditService.js';
 import { notifyFarm } from './notificationService.js';
 import { COLLECTION_METHODS } from '../config/rules.js';
+import { getPolicy } from './policyService.js';
+import { routingFor } from './routingService.js';
+import { marginGuard } from './marginService.js';
 
 export const RESCUE_REASONS = ['COSMETIC_IMPERFECTION', 'SURPLUS', 'SHORT_DATED', 'IRREGULAR_SIZE', 'OTHER'];
 export const RESCUE_DISCLAIMER =
   'Rescue produce has been assessed as suitable for sale by the farm. Tyllage does not inspect produce.';
-const MAX_DEADLINE_DAYS = 14;
+/** Lowest Rescue price allowed by platform policy (max discount off the original price). */
+const policyFloor = (originalPrice) => round2(Number(originalPrice) * (1 - getPolicy().rescueMaxDiscountPct / 100));
 
 const createSchema = z.object({
   harvestBatchId: z.coerce.number().int().positive(),
@@ -58,8 +62,9 @@ function validateDeadline(iso) {
   const deadline = new Date(iso);
   const now = Date.now();
   if (deadline.getTime() <= now) throw badRequest('Collection deadline must be in the future', 'VALIDATION_ERROR');
-  if (deadline.getTime() > now + MAX_DEADLINE_DAYS * 86400000) {
-    throw badRequest(`Collection deadline must be within ${MAX_DEADLINE_DAYS} days`, 'VALIDATION_ERROR');
+  const maxDays = getPolicy().rescueMaxDeadlineDays;
+  if (deadline.getTime() > now + maxDays * 86400000) {
+    throw badRequest(`Collection deadline must be within ${maxDays} days`, 'VALIDATION_ERROR');
   }
 }
 
@@ -82,6 +87,12 @@ export async function createListing(user, input, ip) {
     const originalPrice = Number(batch.preferred_price);
     if (d.rescuePrice > originalPrice) {
       throw badRequest(`Rescue price cannot exceed the original price ($${originalPrice.toFixed(2)})`, 'VALIDATION_ERROR');
+    }
+    if (d.rescuePrice < policyFloor(originalPrice)) {
+      throw badRequest(
+        `Rescue price cannot be more than ${getPolicy().rescueMaxDiscountPct}% below the original (minimum $${policyFloor(originalPrice).toFixed(2)})`,
+        'VALIDATION_ERROR'
+      );
     }
 
     const { rows } = await client.query(
@@ -210,4 +221,49 @@ export async function getBatchForRescue(user, batchId) {
   const row = await findBatchById(batchId);
   if (!row || !hasFarmAccess(user, row.farm_id)) throw notFound('Harvest batch not found');
   return toBatchDTO(row);
+}
+
+// Share of the original price suggested at each routing stage (deeper discount as produce ages).
+const STAGE_PRICE_FACTOR = { PRE_HARVEST: 0.8, PREMIUM: 0.8, COMMUNITY: 0.7, RESCUE: 0.6, CLEARANCE: 0.45, DONATION: 0.35 };
+
+/**
+ * Pricing support (rule-based, not AI): suggests a Rescue price from the batch's routing stage,
+ * bounded by the original price and the platform's maximum discount, and checked by Margin Guard.
+ */
+export function suggestRescuePrice(row) {
+  const original = Number(row.preferred_price);
+  const routing = routingFor(row);
+  const factor = STAGE_PRICE_FACTOR[routing.stage] ?? 0.65;
+  const floor = policyFloor(original);
+  const raw = Math.max(floor, original * factor);
+  const suggested = Math.min(original, Math.round(raw * 2) / 2); // nearest $0.50
+  const cost = row.production_cost === null || row.production_cost === undefined ? null : Number(row.production_cost);
+  const guard = marginGuard({ unitPrice: suggested, cost, minMarginPct: row.min_margin_pct ?? 0 });
+  const rationale = [
+    `Batch is at "${routing.label}" (day ${Math.max(0, routing.daysSinceHarvest)} of ${routing.shelfLifeDays}) → ${Math.round(factor * 100)}% of the original price`,
+    `Platform policy allows at most ${getPolicy().rescueMaxDiscountPct}% off (floor $${floor.toFixed(2)})`,
+  ];
+  if (guard.known) {
+    rationale.push(guard.status === 'LOSS'
+      ? `Below production cost ($${cost.toFixed(2)}) — still recovers more than wasting the produce`
+      : guard.message);
+  } else {
+    rationale.push('No production cost recorded, so margin cannot be checked');
+  }
+  return {
+    method: 'RULE_BASED',
+    originalPrice: original,
+    suggestedPrice: suggested,
+    floorPrice: floor,
+    breakEvenPrice: cost,
+    routingStage: routing.stage,
+    marginGuard: guard,
+    rationale,
+  };
+}
+
+export async function getPriceSuggestion(user, batchId) {
+  const row = await findBatchById(batchId);
+  if (!row || !hasFarmAccess(user, row.farm_id)) throw notFound('Harvest batch not found');
+  return suggestRescuePrice(row);
 }

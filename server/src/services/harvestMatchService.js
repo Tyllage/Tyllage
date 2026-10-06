@@ -5,14 +5,9 @@
  * recommendation carries human-readable reasons. The farm admin approves or rejects each one.
  */
 import { withTransaction, query } from '../config/db.js';
-import {
-  MATCH_WEIGHTS,
-  FRESHNESS_WINDOW_DAYS,
-  NEUTRAL_RELIABILITY_SCORE,
-  ADJACENT_REGIONS,
-  STRONG_MATCH_THRESHOLD,
-  buyerChannel,
-} from '../config/rules.js';
+import { ADJACENT_REGIONS, buyerChannel, emptyChannelTotals } from '../config/rules.js';
+import { getPolicy } from './policyService.js';
+import { marginGuard } from './marginService.js';
 import { round2 } from '../utils/numbers.js';
 import { addDays, daysBetween } from '../utils/dates.js';
 import { camelize } from '../utils/case.js';
@@ -63,8 +58,9 @@ export function scoreDate(batch, demand) {
   const required = effectiveRequiredDate(demand, batch.harvest_date);
   const gap = daysBetween(batch.harvest_date, required);
   if (gap < 0) return { score: 0, exclude: `Required ${-gap} day(s) before harvest date`, required };
-  if (gap > FRESHNESS_WINDOW_DAYS) {
-    return { score: 0, exclude: `Required ${gap} days after harvest — beyond ${FRESHNESS_WINDOW_DAYS}-day freshness window`, required };
+  const freshness = getPolicy().freshnessWindowDays;
+  if (gap > freshness) {
+    return { score: 0, exclude: `Required ${gap} days after harvest — beyond ${freshness}-day freshness window`, required };
   }
   if (gap <= 2) return { score: 100, reason: 'Required date matches harvest window', required };
   if (gap <= 4) return { score: 75, reason: `Required ${gap} days after harvest`, required };
@@ -94,8 +90,19 @@ export function scorePrice(batch, demand) {
   return { score, unitPrice: max, reason: `Buyer price ${money(max)} meets farm minimum` };
 }
 
-export function scoreQuantity(demandRemaining, supplyRemaining, unit = 'kg') {
+/**
+ * Quantity fit, including minimum order quantities:
+ *  - buyerMin: the smallest delivery the buyer will accept;
+ *  - farmMoq: the farm's minimum order for this produce (smaller requests can go through DemandPool).
+ */
+export function scoreQuantity(demandRemaining, supplyRemaining, unit = 'kg', { buyerMin = null, farmMoq = 0 } = {}) {
   if (supplyRemaining <= 0) return { score: 0, exclude: 'No unallocated supply remaining' };
+  if (farmMoq > 0 && demandRemaining < farmMoq) {
+    return { score: 0, exclude: `Request of ${round2(demandRemaining)}${unit} is below the farm minimum order of ${farmMoq}${unit} — consider DemandPool` };
+  }
+  if (buyerMin && supplyRemaining < buyerMin) {
+    return { score: 0, exclude: `Only ${round2(supplyRemaining)}${unit} available; buyer's minimum delivery is ${buyerMin}${unit}` };
+  }
   if (demandRemaining <= supplyRemaining) return { score: 100, reason: 'Requested quantity fits available supply' };
   const ratio = supplyRemaining / demandRemaining;
   return {
@@ -105,7 +112,7 @@ export function scoreQuantity(demandRemaining, supplyRemaining, unit = 'kg') {
 }
 
 export function scoreReliability(stats) {
-  if (!stats) return { score: NEUTRAL_RELIABILITY_SCORE, reason: 'Limited order history — neutral reliability score applied' };
+  if (!stats) return { score: getPolicy().neutralReliabilityScore, reason: 'Limited order history — neutral reliability score applied' };
   const score = Math.round((stats.completed / stats.total) * 100);
   return {
     score,
@@ -148,16 +155,23 @@ export function scoreCandidate(batch, demand, { supplyRemaining, reliability }) 
     produce: scoreProduce(batch, demand),
     date: scoreDate(batch, demand),
     price: scorePrice(batch, demand),
-    quantity: scoreQuantity(demandRemaining, supplyRemaining, batch.unit),
+    quantity: scoreQuantity(demandRemaining, supplyRemaining, batch.unit, {
+      buyerMin: demand.min_quantity ? Number(demand.min_quantity) : null,
+      farmMoq: Number(batch.min_order_quantity || 0),
+    }),
     reliability: scoreReliability(reliability),
     location: scoreLocation(batch, demand),
   };
   const blocker = Object.values(factors).find((f) => f.exclude);
   if (blocker) return { excluded: true, reason: blocker.exclude };
 
+  // Margin Guard is advisory: it never changes the score, it warns the farmer.
+  const margin = marginGuard({ unitPrice: factors.price.unitPrice, cost: batch.production_cost, minMarginPct: batch.min_margin_pct ?? 0 });
+  if (margin.known && margin.status !== 'OK') factors.margin = { warning: margin.message };
+
   let total = 0;
   const breakdown = {};
-  for (const [key, weight] of Object.entries(MATCH_WEIGHTS)) {
+  for (const [key, weight] of Object.entries(getPolicy().matchWeights)) {
     const contribution = (factors[key].score * weight) / 100;
     total += contribution;
     breakdown[key] = { score: factors[key].score, weight, contribution: round2(contribution) };
@@ -211,10 +225,44 @@ export function rankAndAllocate(batch, candidates, context) {
       excluded.push(describeExcluded(c.demand, 'No supply left after higher-ranked matches'));
       continue;
     }
+    if (c.demand.min_quantity && qty < Number(c.demand.min_quantity)) {
+      excluded.push(describeExcluded(c.demand, `Supply left after higher-ranked matches (${qty}${batch.unit}) is below the buyer's minimum of ${c.demand.min_quantity}${batch.unit}`));
+      continue;
+    }
     remaining = round2(remaining - qty);
     matches.push({ ...c, recommendedQuantity: qty, expectedRevenue: round2(qty * c.unitPrice) });
   }
   return { matches, excluded, supply, unmatchedQuantity: remaining };
+}
+
+/**
+ * Demand Radar "Potential Demand": open, unconfirmed demand whose produce and timing fit the batch
+ * (price and quantity are not yet considered — this is the raw demand signal).
+ */
+export function potentialDemandFor(batch, candidates) {
+  let total = 0;
+  let requests = 0;
+  for (const d of candidates) {
+    if (scoreProduce(batch, d).exclude || scoreDate(batch, d).exclude) continue;
+    total += Number(d.quantity) - Number(d.fulfilled_quantity || 0);
+    requests += 1;
+  }
+  return { quantity: round2(total), requests };
+}
+
+/** Open demand visible to a farm (directed to it, or open-market). */
+export async function loadOpenDemandForFarm(farmId, client) {
+  const runner = client || { query };
+  const { rows } = await runner.query(
+    `SELECT dr.*, bp.organisation_name, bp.buyer_type, bp.region, bp.preferred_collection_method
+       FROM demand_requests dr
+       JOIN buyer_profiles bp ON bp.id = dr.buyer_id AND bp.is_active
+      WHERE dr.status IN ('OPEN', 'PARTIALLY_FULFILLED')
+        AND dr.quantity > dr.fulfilled_quantity
+        AND (dr.farm_id IS NULL OR dr.farm_id = $1)`,
+    [farmId]
+  );
+  return rows;
 }
 
 function describeExcluded(demand, reason) {
@@ -231,18 +279,7 @@ function describeExcluded(demand, reason) {
 // ---------------------------------------------------------------- persistence
 
 /** Open demand this farm may serve, joined with buyer info needed for scoring. */
-async function loadCandidates(client, batch) {
-  const { rows } = await client.query(
-    `SELECT dr.*, bp.organisation_name, bp.buyer_type, bp.region, bp.preferred_collection_method
-       FROM demand_requests dr
-       JOIN buyer_profiles bp ON bp.id = dr.buyer_id AND bp.is_active
-      WHERE dr.status IN ('OPEN', 'PARTIALLY_FULFILLED')
-        AND dr.quantity > dr.fulfilled_quantity
-        AND (dr.farm_id IS NULL OR dr.farm_id = $1)`,
-    [batch.farm_id]
-  );
-  return rows;
-}
+const loadCandidates = (client, batch) => loadOpenDemandForFarm(batch.farm_id, client);
 
 /**
  * Demand that must not be recommended for this batch:
@@ -291,7 +328,12 @@ export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', tri
       `UPDATE harvest_matches SET status = 'SUPERSEDED' WHERE harvest_batch_id = $1 AND status = 'SUGGESTED'`,
       [batchId]
     );
-    const summary = buildSummary(result);
+    // "Existing customers" = buyers with a completed order from this farm; "subscribers" = recurring demand.
+    const existing = await client.query(
+      `SELECT DISTINCT buyer_id FROM orders WHERE farm_id = $1 AND status = 'COMPLETED'`,
+      [batch.farm_id]
+    );
+    const summary = buildSummary(result, new Set(existing.rows.map((r) => r.buyer_id)));
     const run = await client.query(
       `INSERT INTO match_runs (farm_id, harvest_batch_id, run_type, trigger_reason, remaining_quantity,
                                candidates_count, excluded, summary, created_by)
@@ -330,24 +372,36 @@ export async function runMatching(user, batchId, { runType = 'HARVESTMATCH', tri
 }
 
 /** Groups strong matches by channel for the recovery view; weak matches are reported separately. */
-function buildSummary(result) {
-  const channels = { BUSINESS: 0, COMMUNITY: 0, CONSUMER: 0 };
+export function buildSummary(result, existingCustomerIds = new Set()) {
+  const threshold = getPolicy().strongMatchThreshold;
+  const channels = emptyChannelTotals();
   let strongTotal = 0;
   let weakTotal = 0;
+  let existingCustomers = 0;
+  let subscribers = 0;
   for (const m of result.matches) {
-    if (m.matchScore >= STRONG_MATCH_THRESHOLD) {
-      channels[buyerChannel(m.demand.buyer_type)] = round2(channels[buyerChannel(m.demand.buyer_type)] + m.recommendedQuantity);
+    if (m.matchScore >= threshold) {
+      const ch = buyerChannel(m.demand.buyer_type);
+      channels[ch] = round2(channels[ch] + m.recommendedQuantity);
       strongTotal = round2(strongTotal + m.recommendedQuantity);
+      if (existingCustomerIds.has(m.demand.buyer_id)) existingCustomers = round2(existingCustomers + m.recommendedQuantity);
+      if (m.demand.recurrence && m.demand.recurrence !== 'NONE') subscribers = round2(subscribers + m.recommendedQuantity);
     } else {
       weakTotal = round2(weakTotal + m.recommendedQuantity);
     }
   }
+  // Small requests excluded only because they are below the farm MOQ can still be served together.
+  const demandPoolCandidates = result.excluded.filter((e) => /below the farm minimum order/.test(e.reason));
   return {
     remainingAtStart: result.supply,
-    strongMatchThreshold: STRONG_MATCH_THRESHOLD,
+    strongMatchThreshold: threshold,
     potentialByChannel: channels,
+    potentialFromExistingCustomers: existingCustomers,
+    potentialFromSubscribers: subscribers,
     potentialStrongTotal: strongTotal,
     potentialWeakTotal: weakTotal,
+    demandPoolQuantity: round2(demandPoolCandidates.reduce((s, e) => s + e.quantity, 0)),
+    demandPoolRequests: demandPoolCandidates.length,
     remainingAfterStrong: round2(result.supply - strongTotal),
   };
 }
@@ -380,9 +434,18 @@ export async function getMatchesForBatch(user, batchId, client) {
     await runner.query('SELECT * FROM match_runs WHERE harvest_batch_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [batchId])
   ).rows[0];
 
+  // Decision support from the proposal: margin (Margin Guard) and urgency (routing stage) per match.
+  const decorate = (row) => {
+    const m = camelize(row);
+    const qty = Number(m.approvedQuantity ?? m.recommendedQuantity);
+    m.margin = marginGuard({ unitPrice: m.unitPrice, cost: batch.productionCost, minMarginPct: batch.minMarginPct ?? 0, quantity: qty });
+    m.urgency = batch.routing?.urgency || null;
+    return m;
+  };
+
   return {
     batch,
-    matches: rows.map(camelize),
+    matches: rows.map(decorate),
     lastRun: lastRun ? camelize(lastRun) : null,
   };
 }

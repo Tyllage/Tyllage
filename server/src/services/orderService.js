@@ -4,7 +4,8 @@ import { validate } from '../utils/validate.js';
 import { camelize, camelizeAll } from '../utils/case.js';
 import { notFound, forbidden, conflict, badRequest } from '../utils/errors.js';
 import { hasFarmAccess, assertFarmAdmin, isFarmSide } from './farmAccessService.js';
-import { releaseOrderAllocations } from './allocationService.js';
+import { releaseOrderAllocations, createMultiLineOrder } from './allocationService.js';
+import { COLLECTION_METHODS } from '../config/rules.js';
 import { logAudit } from './auditService.js';
 import { notifyBuyer, notifyFarm } from './notificationService.js';
 
@@ -145,4 +146,125 @@ export async function updateOrderStatus(user, id, input, ip) {
     });
   }
   return order;
+}
+
+// ---------------------------------------------------------------- direct (bulk) orders
+
+const directOrderSchema = z.object({
+  items: z
+    .array(z.object({ harvestBatchId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive().max(100000) }))
+    .min(1, 'Add at least one item')
+    .max(20),
+  collectionMethod: z.enum(COLLECTION_METHODS).optional(),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * Business buyers (bulk, multi-line) and consumers buy directly from available supply.
+ * Orders start PENDING; the farm confirms or cancels. Stock is reserved immediately.
+ */
+export async function createDirectOrder(user, input, ip) {
+  if (!user.buyerId) throw forbidden('A buyer account is required to place orders');
+  const d = validate(directOrderSchema, input);
+  const order = await withTransaction(async (client) => {
+    const o = await createMultiLineOrder(client, {
+      buyerId: user.buyerId,
+      lines: d.items.map((i) => ({ batchId: i.harvestBatchId, quantity: i.quantity })),
+      collectionMethod: d.collectionMethod,
+      notes: d.notes,
+      userId: user.id,
+    });
+    await logAudit({ farmId: o.farm_id, userId: user.id, action: 'ORDER_PLACED', entityType: 'order', entityId: o.id, details: { items: d.items.length, total: o.total_amount }, ip }, client);
+    return loadOrder(o.id, client);
+  });
+  const o = camelize(order);
+  await notifyFarm({
+    farmId: o.farmId,
+    type: 'ORDER_PLACED',
+    title: `New order #${o.id} from ${o.buyerName}`,
+    body: `${o.items.map((i) => `${i.quantity}${i.unit} ${i.produceName}`).join(', ')} — awaiting your confirmation.`,
+  });
+  return o;
+}
+
+// ---------------------------------------------------------------- disputes
+
+export const DISPUTE_REASONS = ['QUALITY', 'QUANTITY', 'LATE', 'NO_SHOW', 'PRICING', 'OTHER'];
+const disputeSchema = z.object({
+  reason: z.enum(DISPUTE_REASONS),
+  description: z.string().trim().min(5, 'Describe the issue').max(2000),
+});
+const resolveSchema = z.object({
+  status: z.enum(['RESOLVED', 'REJECTED']),
+  resolution: z.string().trim().min(3).max(2000),
+});
+
+const DISPUTE_SELECT = `
+  SELECT d.*, o.total_amount, o.status AS order_status, bp.organisation_name AS buyer_name, f.name AS farm_name,
+         u.full_name AS raised_by_name, r.full_name AS resolved_by_name
+    FROM order_disputes d
+    JOIN orders o ON o.id = d.order_id
+    JOIN buyer_profiles bp ON bp.id = o.buyer_id
+    JOIN farms f ON f.id = d.farm_id
+    LEFT JOIN users u ON u.id = d.raised_by
+    LEFT JOIN users r ON r.id = d.resolved_by`;
+
+/** Buyer or farm raises an issue on an order; a platform admin resolves it. */
+export async function raiseDispute(user, orderId, input, ip) {
+  const d = validate(disputeSchema, input);
+  const order = await loadOrder(orderId);
+  if (!canView(user, order)) throw forbidden();
+  if (['PENDING', 'CANCELLED'].includes(order.status)) {
+    throw conflict('Issues can only be reported on confirmed, ready or completed orders', 'ORDER_NOT_DISPUTABLE');
+  }
+  const party = user.buyerId && order.buyer_id === user.buyerId ? 'BUYER' : 'FARM';
+  const open = await query(`SELECT 1 FROM order_disputes WHERE order_id = $1 AND status = 'OPEN'`, [orderId]);
+  if (open.rowCount) throw conflict('An open dispute already exists for this order', 'DISPUTE_EXISTS');
+  const { rows } = await query(
+    `INSERT INTO order_disputes (order_id, farm_id, raised_by, raised_by_party, reason, description)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [orderId, order.farm_id, user.id, party, d.reason, d.description]
+  );
+  await logAudit({ farmId: order.farm_id, userId: user.id, action: 'DISPUTE_RAISED', entityType: 'order', entityId: orderId, details: { reason: d.reason, party }, ip });
+  if (party === 'BUYER') {
+    await notifyFarm({ farmId: order.farm_id, type: 'DISPUTE_RAISED', title: `Issue reported on order #${orderId}`, body: `${order.buyer_name}: ${d.reason.toLowerCase()} — ${d.description}` });
+  }
+  return camelize((await query(`${DISPUTE_SELECT} WHERE d.id = $1`, [rows[0].id])).rows[0]);
+}
+
+export async function listDisputes(user, { status } = {}) {
+  const params = [];
+  const where = [];
+  if (user.role === 'platform_admin') {
+    // all disputes
+  } else if (isFarmSide(user)) {
+    params.push(user.farmIds);
+    where.push(`d.farm_id = ANY($${params.length}::int[])`);
+  } else {
+    params.push(user.buyerId || 0);
+    where.push(`o.buyer_id = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    where.push(`d.status = $${params.length}`);
+  }
+  const { rows } = await query(`${DISPUTE_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY d.created_at DESC`, params);
+  return camelizeAll(rows);
+}
+
+export async function resolveDispute(user, id, input, ip) {
+  const d = validate(resolveSchema, input);
+  const { rows } = await query('SELECT * FROM order_disputes WHERE id = $1', [id]);
+  const dispute = rows[0];
+  if (!dispute) throw notFound('Dispute not found');
+  if (dispute.status !== 'OPEN') throw conflict('This dispute is already closed', 'DISPUTE_CLOSED');
+  await query(
+    `UPDATE order_disputes SET status = $1, resolution = $2, resolved_by = $3, resolved_at = NOW() WHERE id = $4`,
+    [d.status, d.resolution, user.id, id]
+  );
+  await logAudit({ farmId: dispute.farm_id, userId: user.id, action: `DISPUTE_${d.status}`, entityType: 'order_dispute', entityId: id, details: d, ip });
+  const order = await loadOrder(dispute.order_id);
+  await notifyBuyer({ buyerId: order.buyer_id, farmId: order.farm_id, type: 'DISPUTE_UPDATE', title: `Your issue on order #${order.id} was ${d.status.toLowerCase()}`, body: d.resolution });
+  await notifyFarm({ farmId: order.farm_id, type: 'DISPUTE_UPDATE', title: `Dispute on order #${order.id} ${d.status.toLowerCase()}`, body: d.resolution });
+  return camelize((await query(`${DISPUTE_SELECT} WHERE d.id = $1`, [id])).rows[0]);
 }

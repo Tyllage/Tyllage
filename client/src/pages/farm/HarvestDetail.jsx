@@ -10,6 +10,8 @@ import { Icons } from '../../components/Icons.jsx';
 import HarvestFormModal from '../../components/farm/HarvestFormModal.jsx';
 import MatchList from '../../components/farm/MatchList.jsx';
 import RecoveryPanel from '../../components/farm/RecoveryPanel.jsx';
+import RoutingCard from '../../components/farm/RoutingCard.jsx';
+import MarginGuardCard from '../../components/farm/MarginGuardCard.jsx';
 import { date, dateTime, kg, label, money, relativeDay } from '../../utils/format.js';
 
 function Summary({ b }) {
@@ -29,6 +31,8 @@ function Summary({ b }) {
           <div className="stat-line"><span>Expected / actual</span><b>{kg(b.expectedQuantity, b.unit)} / {b.actualQuantity ? kg(b.actualQuantity, b.unit) : '—'}</b></div>
           <div className="stat-line"><span>Preferred / minimum price</span><b>{money(b.preferredPrice)} / {money(b.minPrice)}</b></div>
           <div className="stat-line"><span>Grade</span><b>{label(b.grade)}</b></div>
+          {b.minOrderQuantity > 0 && <div className="stat-line"><span>Farm minimum order</span><b>{kg(b.minOrderQuantity, b.unit)}</b></div>}
+          {b.disposedQuantity > 0 && <div className="stat-line"><span>Donated / alternative use / waste</span><b>{kg(b.disposedQuantity, b.unit)}</b></div>}
           {b.notes && <div className="stat-line"><span>Notes</span><span className="muted">{b.notes}</span></div>}
         </div>
       </div>
@@ -104,6 +108,13 @@ export default function HarvestDetail() {
 
             <div className="stack">
               <Summary b={b} />
+
+              {!closed && (
+                <div className="grid grid-main-side">
+                  <RoutingCard batch={b} canAct={isFarmAdmin} onChanged={state.reload} />
+                  {isFarmAdmin && <MarginGuardCard batch={b} />}
+                </div>
+              )}
 
               {isFarmAdmin && !closed && (
                 <Card

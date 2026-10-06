@@ -7,7 +7,8 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { Field, Modal, fieldErrors } from '../ui.jsx';
 import { label, todayISO } from '../../utils/format.js';
 
-const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE'];
+// Premium · Everyday · Rescue · Chef Pack (bulk produce where appearance matters less).
+const GRADES = ['PREMIUM', 'EVERYDAY', 'RESCUE_ELIGIBLE', 'CHEF_PACK'];
 
 /** Create (no `batch`) or edit (with `batch`) a harvest batch. */
 export default function HarvestFormModal({ batch, onClose, onSaved }) {
@@ -23,6 +24,7 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
     grade: batch?.grade ?? 'EVERYDAY',
     preferredPrice: batch?.preferredPrice ?? '',
     minPrice: batch?.minPrice ?? '',
+    productionCost: batch?.productionCost ?? '',
     notes: batch?.notes ?? '',
   });
   const [error, setError] = useState(null);
@@ -51,6 +53,7 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
     if (!batch || canEditPrice) {
       body.preferredPrice = Number(form.preferredPrice);
       body.minPrice = Number(form.minPrice);
+      body.productionCost = form.productionCost === '' ? null : Number(form.productionCost);
     }
     try {
       const saved = batch
@@ -104,6 +107,11 @@ export default function HarvestFormModal({ batch, onClose, onSaved }) {
           <Field label="Preferred price ($/kg)" error={errs.preferredPrice} hint={!canEditPrice && batch ? 'Farm admins set prices' : undefined}>
             <input className="input" type="number" min="0.01" step="0.01" value={form.preferredPrice} onChange={set('preferredPrice')} required disabled={batch && !canEditPrice} />
           </Field>
+          {(!batch || canEditPrice) && (
+            <Field label="Production cost ($/kg)" full hint="Optional, farm-private. Enables Margin Guard and margin-per-kg analytics." error={errs.productionCost}>
+              <input className="input" type="number" min="0" step="0.01" value={form.productionCost} onChange={set('productionCost')} />
+            </Field>
+          )}
           <Field label="Minimum acceptable price ($/kg)" error={errs.minPrice} hint="Never shown to buyers">
             <input className="input" type="number" min="0.01" step="0.01" value={form.minPrice} onChange={set('minPrice')} required disabled={batch && !canEditPrice} />
           </Field>

@@ -18,14 +18,22 @@ const FARM_NAV = [
   { to: '/farm/analytics', label: 'Analytics', icon: Icons.Analytics, admin: true },
   { to: '/farm/settings', label: 'Settings', icon: Icons.Settings },
 ];
+const NETWORK_NAV = [
+  { to: '/farm/farmpool', label: 'FarmPool', icon: Icons.Farm },
+  { to: '/farm/demandpool', label: 'DemandPool', icon: Icons.Users },
+];
 const ADMIN_NAV = [
   { to: '/admin/farms', label: 'Farms', icon: Icons.Farm },
   { to: '/admin/users', label: 'Users', icon: Icons.Users },
-  { to: '/status', label: 'API status codes', icon: Icons.Alert },
+  { to: '/admin/policies', label: 'Policies', icon: Icons.Settings },
+  { to: '/admin/disputes', label: 'Disputes', icon: Icons.Alert },
+  { to: '/admin/audit', label: 'Audit log', icon: Icons.Orders },
+  { to: '/status', label: 'API status codes', icon: Icons.Analytics },
 ];
 const BUYER_NAV = [
   { to: '/buyer/dashboard', label: 'Dashboard', icon: Icons.Overview },
   { to: '/buyer/supply', label: 'Available Supply', icon: Icons.Supply },
+  { to: '/market/farms', label: 'Farms', icon: Icons.Farm },
   { to: '/buyer/demand', label: 'My Demand', icon: Icons.Demand },
   { to: '/buyer/matches', label: 'Matches', icon: Icons.Match },
   { to: '/buyer/orders', label: 'Orders', icon: Icons.Orders },
@@ -35,6 +43,7 @@ const CONSUMER_NAV = [
   { to: '/consumer', label: 'Home', icon: Icons.Home, end: true },
   { to: '/consumer/available', label: 'Available Now', icon: Icons.Supply },
   { to: '/consumer/growing', label: 'Growing Soon', icon: Icons.Sprout },
+  { to: '/market/farms', label: 'Farms', icon: Icons.Farm },
   { to: '/consumer/rescue', label: 'Rescue', icon: Icons.Rescue },
   { to: '/consumer/drops', label: 'Community Drops', icon: Icons.Pin },
   { to: '/consumer/orders', label: 'My Orders', icon: Icons.Orders },
@@ -116,6 +125,12 @@ export default function AppShell() {
             <>
               <div className="nav-section">Farm</div>
               <NavItems items={FARM_NAV.filter((i) => !i.admin || isFarmAdmin)} />
+              {isFarmAdmin && (
+                <>
+                  <div className="nav-section">Network</div>
+                  <NavItems items={NETWORK_NAV} />
+                </>
+              )}
             </>
           )}
           {isPlatformAdmin && (

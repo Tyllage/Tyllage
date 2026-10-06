@@ -8,7 +8,8 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { AsyncBoundary, Card, EmptyState, KpiCard, PageHeader } from '../../components/ui.jsx';
 import { CoverageBar, RiskBadge, StatusBadge } from '../../components/domain.jsx';
 import { Icons } from '../../components/Icons.jsx';
-import { date, kg, pct, relativeDay } from '../../utils/format.js';
+import { date, kg, label, pct, relativeDay } from '../../utils/format.js';
+import AiPanel from '../../components/AiPanel.jsx';
 
 const ACTION_STYLE = {
   RUN_HARVESTMATCH: { icon: Icons.Match, bg: 'var(--high-soft)', color: 'var(--high)' },
@@ -40,6 +41,29 @@ function BatchAction({ batch, isFarmAdmin, onRun, running }) {
     return <Link className="btn btn-sm" to={`/farm/harvests/${batch.id}#recovery`}>Recover demand</Link>;
   }
   return <Link className="btn btn-sm btn-ghost" to={`/farm/harvests/${batch.id}`}>View</Link>;
+}
+
+/** Weekly demand briefing from the AI assistant (simulated without an OpenAI key). */
+function InsightsCard({ farmId }) {
+  const toast = useToast();
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      setResult(await api.post('/ai/insights', { farmId }));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="AI demand insights" description="A short briefing written from this dashboard's data."
+      actions={<button className="btn btn-sm" onClick={run} disabled={busy}><Icons.Sparkle />{busy ? 'Writing…' : result ? 'Refresh' : 'Generate'}</button>}>
+      {result ? <AiPanel result={result} title="Demand briefing" /> : <p className="small muted">Summarises coverage gaps, potential demand and routing urgency. The AI only writes text — it never changes stock or prices.</p>}
+    </Card>
+  );
 }
 
 export default function Overview() {
@@ -75,7 +99,7 @@ export default function Overview() {
             <>
               <div className="kpi-grid">
                 <KpiCard label="Expected Harvest" value={kg(kpis.expectedHarvest)} sub={`${upcomingHarvest.length} open batches`} tone="primary" />
-                <KpiCard label="Confirmed Demand" value={kg(kpis.confirmedDemand)} sub={`${pct(kpis.demandCoverage)} demand coverage`} tone={kpis.riskLevel ? kpis.riskLevel.toLowerCase() : 'neutral'} />
+                <KpiCard label="Confirmed Demand" value={kg(kpis.confirmedDemand)} sub={`${pct(kpis.demandCoverage)} coverage · ${kg(kpis.potentialDemand)} potential`} tone={kpis.riskLevel ? kpis.riskLevel.toLowerCase() : 'neutral'} />
                 <KpiCard label="Unallocated Produce" value={kg(kpis.unallocatedProduce)} sub="No buyer or Rescue yet" tone="neutral" />
                 <KpiCard label="At-Risk Produce" value={kg(kpis.atRiskProduce)} sub="Needs matching or recovery" tone={kpis.atRiskProduce > 0 ? 'high' : 'low'} />
                 <KpiCard label="Active Orders" value={kpis.activeOrders} sub="Pending, confirmed or ready" tone="neutral" />
@@ -84,8 +108,8 @@ export default function Overview() {
 
               <div className="grid grid-main-side">
                 <Card
-                  title="Upcoming Harvest"
-                  description={`Risk is rule-based on Demand Coverage: ≥${rules.riskThresholds.LOW}% LOW · ${rules.riskThresholds.MEDIUM}–${rules.riskThresholds.LOW - 1}% MEDIUM · <${rules.riskThresholds.MEDIUM}% HIGH`}
+                  title="Demand Radar — Upcoming Harvest"
+                  description={`Potential = open demand not yet confirmed. Risk is rule-based on Demand Coverage: ≥${rules.riskThresholds.LOW}% LOW · ${rules.riskThresholds.MEDIUM}–${rules.riskThresholds.LOW - 1}% MEDIUM · <${rules.riskThresholds.MEDIUM}% HIGH`}
                   tight
                 >
                   {upcomingHarvest.length === 0 ? (
@@ -96,7 +120,7 @@ export default function Overview() {
                         <thead>
                           <tr>
                             <th>Produce</th><th>Harvest Date</th><th className="num">Expected</th><th className="num">Confirmed Demand</th>
-                            <th>Demand Coverage</th><th className="num">Unallocated</th><th>Risk</th><th>Status</th><th>Action</th>
+                            <th className="num">Potential Demand</th><th>Demand Coverage</th><th className="num">Unallocated</th><th>Risk</th><th>Status</th><th>Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -106,10 +130,11 @@ export default function Overview() {
                               <td className="nowrap">{date(b.harvestDate)}<div className="cell-sub">{relativeDay(b.harvestDate)}</div></td>
                               <td className="num">{kg(b.harvestQuantity, b.unit)}</td>
                               <td className="num">{kg(b.confirmedDemand, b.unit)}</td>
+                              <td className="num" title={`${b.potentialDemand.requests} open request(s) fit this batch`}>{kg(b.potentialDemand.quantity, b.unit)}</td>
                               <td><CoverageBar value={b.demandCoverage} risk={b.riskLevel} /></td>
                               <td className="num strong">{kg(b.unallocatedQuantity, b.unit)}</td>
                               <td><RiskBadge level={b.riskLevel} /></td>
-                              <td><StatusBadge status={b.status} /></td>
+                              <td><StatusBadge status={b.status} />{b.routing?.active && <div className="cell-sub">{label(b.routing.stage)} route</div>}</td>
                               <td><BatchAction batch={b} isFarmAdmin={isFarmAdmin} onRun={runMatch} running={running} /></td>
                             </tr>
                           ))}
@@ -119,6 +144,8 @@ export default function Overview() {
                   )}
                 </Card>
 
+                <div className="stack">
+                <InsightsCard farmId={farmId} />
                 <Card title="Requires action" tight>
                   {actions.length === 0 ? (
                     <EmptyState title="All clear">No harvests currently need attention.</EmptyState>
@@ -138,6 +165,7 @@ export default function Overview() {
                     </ul>
                   )}
                 </Card>
+                </div>
               </div>
               {farm?.isDemo && <p className="small muted mt-16">All figures are calculated live from PostgreSQL records. Demo records are fictional.</p>}
             </>

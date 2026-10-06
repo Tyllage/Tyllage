@@ -13,6 +13,7 @@ router.get('/health', async (_req, res) => {
   const database = await checkDatabase();
   res.status(database === 'connected' ? 200 : 503).json({
     success: database === 'connected',
+    ...(database !== 'connected' && { message: 'Database is unreachable', code: 'SERVICE_UNAVAILABLE' }),
     data: {
       service: 'tyllage-api',
       status: database === 'connected' ? 'ok' : 'degraded',
